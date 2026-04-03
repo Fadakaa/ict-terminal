@@ -157,6 +157,11 @@ _DEFAULT_CONFIG = {
     "backtest_data_source": "oanda",
 }
 
+# Disable macOS-only notifications on Linux (osascript doesn't exist)
+import sys
+if sys.platform != "darwin":
+    _DEFAULT_CONFIG["notify_macos"] = False
+
 _active_config = deepcopy(_DEFAULT_CONFIG)
 
 
