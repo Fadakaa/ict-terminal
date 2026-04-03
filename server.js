@@ -35,6 +35,25 @@ app.post("/api/anthropic/v1/messages", async (req, res) => {
   }
 });
 
+// Proxy admin restore endpoints — raw binary passthrough (no JSON parsing)
+app.post("/api/ml/restore/*", express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
+  const mlPath = req.path.replace(/^\/api\/ml/, "");
+  try {
+    const response = await fetch(`http://localhost:8000${mlPath}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Admin-Secret": req.headers["x-admin-secret"] || "",
+      },
+      body: req.body,
+    });
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (e) {
+    res.status(502).json({ error: { message: "ML server unavailable: " + e.message } });
+  }
+});
+
 // Proxy ML API calls to Python FastAPI server
 app.all("/api/ml/*", async (req, res) => {
   const mlPath = req.path.replace(/^\/api\/ml/, "");
