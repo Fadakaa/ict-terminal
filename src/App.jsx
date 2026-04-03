@@ -455,7 +455,7 @@ export default function App() {
     if (!silent) { setLoadingData(true); setError(""); }
     try {
       const res = await fetch(
-        `http://localhost:8000/candles?symbol=XAU/USD&interval=${timeframe}&count=${TF_CANDLES[timeframe] || 100}`
+        `/api/ml/candles?symbol=XAU/USD&interval=${timeframe}&count=${TF_CANDLES[timeframe] || 100}`
       );
       const json = await res.json();
       if (!json.values?.length) throw new Error("No data returned from OANDA");
@@ -478,7 +478,7 @@ export default function App() {
   const fetch4hCandles = useCallback(async () => {
     try {
       const res = await fetch(
-        `http://localhost:8000/candles?symbol=XAU/USD&interval=4h&count=20`
+        `/api/ml/candles?symbol=XAU/USD&interval=4h&count=20`
       );
       const json = await res.json();
       if (!json.values?.length) return null;
