@@ -45,7 +45,8 @@ class CostTracker:
     def __init__(self, config: dict = None):
         self.cfg = config or get_config()
         self._path = os.path.join(
-            os.path.dirname(__file__), "models", "cost_log.json")
+            self.cfg.get("model_dir", os.path.join(os.path.dirname(__file__), "models")),
+            "cost_log.json")
         self._log = self._load()
 
     def _load(self) -> list:

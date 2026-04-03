@@ -34,12 +34,9 @@ class ClaudeAnalysisBridge:
 
     def __init__(self, config: dict = None):
         self.cfg = config or get_config()
-        self._accuracy_path = os.path.join(
-            os.path.dirname(__file__), "models", "claude_accuracy.json"
-        )
-        self._narrative_weights_path = os.path.join(
-            os.path.dirname(__file__), "models", "narrative_weights.json"
-        )
+        model_dir = self.cfg.get("model_dir", os.path.join(os.path.dirname(__file__), "models"))
+        self._accuracy_path = os.path.join(model_dir, "claude_accuracy.json")
+        self._narrative_weights_path = os.path.join(model_dir, "narrative_weights.json")
         self._accuracy = self._load_accuracy()
         self._narrative_weights = self._load_narrative_weights()
 

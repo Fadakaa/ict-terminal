@@ -36,7 +36,8 @@ class NarrativeBandit:
     def __init__(self, config: dict = None):
         self.cfg = config or get_config()
         self._path = os.path.join(
-            os.path.dirname(__file__), "models", "narrative_bandit.json")
+            self.cfg.get("model_dir", os.path.join(os.path.dirname(__file__), "models")),
+            "narrative_bandit.json")
         self._state = self._load()
 
     def _load(self) -> dict:

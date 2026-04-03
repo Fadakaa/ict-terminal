@@ -645,7 +645,8 @@ class MLCalibrator:
     def _load_v1_session_stats(self) -> dict:
         """Load V1 session stats from disk."""
         path = os.path.join(
-            os.path.dirname(__file__), "models", "v1_session_stats.json"
+            self.cfg.get("model_dir", os.path.join(os.path.dirname(__file__), "models")),
+            "v1_session_stats.json"
         )
         if os.path.exists(path):
             try:
@@ -658,7 +659,8 @@ class MLCalibrator:
     def _load_v1_priors(self) -> dict:
         """Load V1 Bayesian priors from disk."""
         path = os.path.join(
-            os.path.dirname(__file__), "models", "v1_bayesian_priors.json"
+            self.cfg.get("model_dir", os.path.join(os.path.dirname(__file__), "models")),
+            "v1_bayesian_priors.json"
         )
         if os.path.exists(path):
             try:

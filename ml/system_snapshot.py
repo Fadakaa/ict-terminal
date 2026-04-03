@@ -33,6 +33,8 @@ class SystemSnapshotRecorder:
     """Records and queries point-in-time snapshots of the ML brain state."""
 
     def __init__(self, db_path: str = None, config: dict = None):
+        if db_path is None:
+            db_path = get_config().get("db_path")
         self.db_path = db_path or _DEFAULT_DB
         self.cfg = config or get_config()
         self._ensure_table()

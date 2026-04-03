@@ -2133,7 +2133,8 @@ class ScannerEngine:
 
             # Check if AG weights should override
             ag_path = os.path.join(
-                os.path.dirname(__file__), "models", "narrative_weights_ag.json")
+                self.cfg.get("model_dir", os.path.join(os.path.dirname(__file__), "models")),
+                "narrative_weights_ag.json")
             if os.path.exists(ag_path):
                 try:
                     from ml.training import get_active_model_type
@@ -2347,7 +2348,8 @@ class ScannerEngine:
                                   zone_type: str = "", is_win: bool = False):
         """Update ml/models/prospect_tracker.json with prospect lifecycle events."""
         tracker_path = os.path.join(
-            os.path.dirname(__file__), "models", "prospect_tracker.json")
+            self.cfg.get("model_dir", os.path.join(os.path.dirname(__file__), "models")),
+            "prospect_tracker.json")
         try:
             if os.path.exists(tracker_path):
                 with open(tracker_path) as f:

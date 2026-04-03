@@ -22,7 +22,13 @@ class SetupProfileStore:
     """Manages historical setup DNA profiles for pattern matching."""
 
     def __init__(self, path: str = None):
-        self._path = path or _DEFAULT_PATH
+        if path is None:
+            from ml.config import get_config
+            path = os.path.join(
+                get_config().get("model_dir", os.path.join(os.path.dirname(__file__), "models")),
+                "setup_profiles.json"
+            )
+        self._path = path
         self._profiles = self._load()
         self._id_set = {p["setup_id"] for p in self._profiles}
 

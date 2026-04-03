@@ -33,6 +33,9 @@ class NarrativeStore:
     """Per-timeframe narrative state persistence."""
 
     def __init__(self, db_path: str = None):
+        if db_path is None:
+            from ml.config import get_config
+            db_path = get_config().get("db_path")
         self.db_path = db_path or os.path.join(
             os.path.dirname(__file__), "models", "scanner.db"
         )

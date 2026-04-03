@@ -34,12 +34,17 @@ from ml.dataset import TrainingDatasetManager
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "models", "scanner.db")
+_FALLBACK_DB = os.path.join(os.path.dirname(__file__), "models", "scanner.db")
+
+
+def _get_db_path():
+    from ml.config import get_config
+    return get_config().get("db_path", _FALLBACK_DB)
 
 
 def _load_resolved_setups() -> list[dict]:
     """Load all resolved setups with stored JSON blobs."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(_get_db_path())
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT * FROM scanner_setups "
