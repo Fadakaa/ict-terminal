@@ -1600,7 +1600,7 @@ def snapshot_prompt_context(days: int = 14):
 
 # ─── Admin: one-time data migration endpoints ───────────────────────────────
 
-@app.post("/admin/restore/db")
+@app.post("/restore/db")
 async def admin_restore_db(request: Request):
     """Upload local scanner.db to the Railway Volume. Protected by ADMIN_SECRET."""
     secret = os.environ.get("ADMIN_SECRET", "")
@@ -1619,7 +1619,7 @@ async def admin_restore_db(request: Request):
     return {"status": "ok", "db_path": db_path, "size_bytes": len(body)}
 
 
-@app.post("/admin/restore/file/{filename}")
+@app.post("/restore/file/{filename}")
 async def admin_restore_file(filename: str, request: Request):
     """Upload a JSON/CSV file to the models directory. Protected by ADMIN_SECRET."""
     secret = os.environ.get("ADMIN_SECRET", "")
