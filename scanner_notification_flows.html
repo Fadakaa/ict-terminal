@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICT Scanner — Notification Flow Diagram</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e0e0e0; padding: 40px 20px; }
+  h1 { text-align: center; font-size: 28px; color: #fff; margin-bottom: 8px; }
+  .subtitle { text-align: center; color: #888; font-size: 14px; margin-bottom: 40px; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  .paths { display: flex; gap: 40px; justify-content: center; flex-wrap: wrap; }
+  .path { flex: 1; min-width: 480px; max-width: 560px; }
+  .path-title { font-size: 20px; font-weight: 700; text-align: center; padding: 14px 20px; border-radius: 12px; margin-bottom: 24px; }
+  .path1 .path-title { background: linear-gradient(135deg, #1a3a5c, #1a4a6c); border: 1px solid #2a6a9c; }
+  .path2 .path-title { background: linear-gradient(135deg, #3a1a5c, #4a1a6c); border: 1px solid #7a3aac; }
+
+  .flow { position: relative; padding-left: 32px; }
+  .flow::before { content: ''; position: absolute; left: 14px; top: 0; bottom: 0; width: 2px; background: #333; }
+
+  .step { position: relative; margin-bottom: 4px; }
+  .step-dot { position: absolute; left: -25px; top: 12px; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #555; background: #1a1a2e; z-index: 1; }
+  .step.notify .step-dot { background: #f59e0b; border-color: #f59e0b; box-shadow: 0 0 8px #f59e0b55; }
+  .step.decision .step-dot { background: #3b82f6; border-color: #3b82f6; }
+  .step.api .step-dot { background: #10b981; border-color: #10b981; }
+  .step.start .step-dot { background: #fff; border-color: #fff; }
+
+  .step-content { background: #141420; border: 1px solid #2a2a3a; border-radius: 10px; padding: 14px 16px; }
+  .step.notify .step-content { border-color: #f59e0b44; background: #1a1810; }
+  .step.decision .step-content { border-color: #3b82f644; background: #101828; }
+  .step.api .step-content { border-color: #10b98144; background: #0a1a14; }
+
+  .step-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .step.notify .step-label { color: #f59e0b; }
+  .step.decision .step-label { color: #3b82f6; }
+  .step.api .step-label { color: #10b981; }
+  .step.start .step-label { color: #fff; }
+  .step .step-label { color: #888; }
+
+  .step-title { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+  .step-desc { font-size: 12px; color: #999; line-height: 1.5; }
+  .step-desc code { background: #222; padding: 1px 5px; border-radius: 3px; font-size: 11px; color: #ccc; }
+
+  .arrow { text-align: center; padding: 6px 0 6px 0; color: #444; font-size: 18px; }
+  .arrow.branch { color: #3b82f6; font-size: 12px; font-weight: 600; }
+
+  .timing-badge { display: inline-block; background: #222; border: 1px solid #444; border-radius: 6px; padding: 2px 8px; font-size: 10px; color: #aaa; margin-top: 6px; }
+
+  .legend { display: flex; gap: 24px; justify-content: center; margin-top: 40px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #aaa; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .legend-dot.notify { background: #f59e0b; }
+  .legend-dot.decision { background: #3b82f6; }
+  .legend-dot.api { background: #10b981; }
+  .legend-dot.process { background: #555; }
+
+  .summary-table { margin: 40px auto 0; max-width: 900px; border-collapse: collapse; width: 100%; }
+  .summary-table th { background: #1a1a2e; color: #aaa; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 14px; text-align: left; border-bottom: 1px solid #333; }
+  .summary-table td { padding: 10px 14px; border-bottom: 1px solid #1a1a2e; font-size: 13px; }
+  .summary-table tr:hover td { background: #141420; }
+  .emoji { font-size: 16px; }
+
+  .section-title { text-align: center; font-size: 18px; font-weight: 600; color: #fff; margin: 48px 0 16px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ICT Scanner — Notification Flow Diagram</h1>
+  <p class="subtitle">Two paths to trade signals: Standard Scan vs Prospect/Trigger</p>
+
+  <div class="paths">
+    <!-- PATH 1: STANDARD SCANNER -->
+    <div class="path path1">
+      <div class="path-title">Path 1: Standard Scanner</div>
+      <div class="flow">
+
+        <div class="step start">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Trigger</div>
+            <div class="step-title">Scan Cycle Starts</div>
+            <div class="step-desc">Scheduler fires every 15 min (Mon-Fri). Iterates 15min → 1H → 4H → 1D timeframes. Skips if candle hash unchanged.</div>
+            <div class="timing-badge">⏱ Every 15 min</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step api">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">API Call — ~$0.001</div>
+            <div class="step-title">Haiku Pre-Screen</div>
+            <div class="step-desc">Quick check: is a setup even possible on this timeframe right now? If NO → log rejection for FN tracker, skip to next TF.</div>
+          </div>
+        </div>
+        <div class="arrow branch">▼ setup_possible = true</div>
+
+        <div class="step api">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">API Call — ~$0.04</div>
+            <div class="step-title">Sonnet Full Analysis</div>
+            <div class="step-desc">Full ICT analysis with exec TF + HTF candles, intermarket context, regime, narrative state. Returns entry, SL, TPs, quality grade, bias.</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step api">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">API Call — ~$0.15</div>
+            <div class="step-title">Opus HTF Narrative</div>
+            <div class="step-desc">Senior analyst reads weekly/daily/4H structure. Returns directional bias, P3 phase, macro narrative. Fed into Sonnet's prompt.</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step decision">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Quality Gates</div>
+            <div class="step-title">Filter Chain</div>
+            <div class="step-desc">Duplicate check → Entry-passed check (0.5%) → RR validation (≥0.6R) → Regime quality gate. Any failure → skip.</div>
+          </div>
+        </div>
+        <div class="arrow branch">▼ all gates pass</div>
+
+        <div class="step">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Processing</div>
+            <div class="step-title">ML Calibration</div>
+            <div class="step-desc">6-layer SL/TP refinement: volatility scaling, V1 session stats, Bayesian beliefs, AutoGluon quantiles, historical matching, consensus.</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step api">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">API Call — A/B grade only</div>
+            <div class="step-title">Opus Validation</div>
+            <div class="step-desc">Opus reviews the setup. Verdict: <code>validated</code> (proceed), <code>downgraded</code> (lower grade), or <code>rejected</code> (shadow trade).</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Storage</div>
+            <div class="step-title">Store Setup in DB</div>
+            <div class="step-desc">Full analysis JSON + calibration JSON saved. Status: "pending". Setup now tracked for resolution.</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step notify">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Notification #1</div>
+            <div class="step-title">🔍 SETUP DETECTED ↑ LONG [1H]</div>
+            <div class="step-desc">Fires immediately for A/B grade setups. Early warning — "get ready." Shows entry, SL, TPs, distance from current price. Soft sound (Tink).</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step decision">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Decision</div>
+            <div class="step-title">Price at Entry?</div>
+            <div class="step-desc">If price already within 0.3% of entry → send entry alert now. Otherwise → defer to 90-second proximity monitor.</div>
+          </div>
+        </div>
+        <div class="arrow branch">▼ price approaches (every 90s check)</div>
+
+        <div class="step notify">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Notification #2 — THE TRADE SIGNAL</div>
+            <div class="step-title">NEW LONG Setup [1H]</div>
+            <div class="step-desc">Full entry alert: lot size, calibrated SL, all TPs with R:R, grade, Opus validation status, ML win probability. <strong>This is the one to trade.</strong></div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Monitoring</div>
+            <div class="step-title">Pending Resolution</div>
+            <div class="step-desc">Every 5 min: fetch 5min candles, check if SL/TP hit. On resolution → log outcome, update Bayesian, update dataset, extract features.</div>
+            <div class="timing-badge">⏱ Every 5 min</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- PATH 2: PROSPECT/TRIGGER -->
+    <div class="path path2">
+      <div class="path-title">Path 2: Prospect / Trigger</div>
+      <div class="flow">
+
+        <div class="step start">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Trigger</div>
+            <div class="step-title">Killzone Approaching</div>
+            <div class="step-desc">Scheduled 15 min before each killzone opens (Asian 0:45, London 7:45, NY AM 12:45, NY PM 17:45 UTC).</div>
+            <div class="timing-badge">⏱ 15 min before KZ</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step api">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">API Call — Opus</div>
+            <div class="step-title">Prospect Generation</div>
+            <div class="step-desc">Opus identifies conditional setup zones for the upcoming killzone: entry zones, sweep levels, invalidation prices. "If price sweeps here and displaces, this OB is the play."</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step notify">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Notification #1</div>
+            <div class="step-title">🔍 ZONE ALERT — London Killzone</div>
+            <div class="step-desc">Lists all conditional setups with zones to watch. Pre-game awareness — "these are the areas to monitor during this session."</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Active Monitoring</div>
+            <div class="step-title">Watch for Sweep + Displacement</div>
+            <div class="step-desc">Every 90 seconds: check if price has swept the prospect's liquidity level. If invalidation level crossed → expire that setup. If all setups invalidated → auto-regen (max 4/day).</div>
+            <div class="timing-badge">⏱ Every 90s (adaptive)</div>
+          </div>
+        </div>
+        <div class="arrow branch">▼ price enters zone (±3 pips)</div>
+
+        <div class="step api">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">API Call — Sonnet</div>
+            <div class="step-title">Displacement Check</div>
+            <div class="step-desc">Lightweight Sonnet call: did a genuine displacement occur? Is there a fresh OB/FVG from the move? Validates the sweep wasn't just noise.</div>
+          </div>
+        </div>
+        <div class="arrow branch">▼ displacement_confirmed = true</div>
+
+        <div class="step notify">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Notification #2</div>
+            <div class="step-title">⚡ DISPLACEMENT CONFIRMED</div>
+            <div class="step-desc">Sweep confirmed, displacement formed OB/FVG. "Waiting for retrace into zone." Shows the OB range and FVG range to watch.</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Retrace Monitoring</div>
+            <div class="step-title">Watch for Retrace into OB/FVG</div>
+            <div class="step-desc">Continues checking every 90s. Waiting for price to pull back into the displacement OB/FVG zone. This is the ICT entry model: sweep → displace → retrace → enter.</div>
+            <div class="timing-badge">⏱ Every 90s</div>
+          </div>
+        </div>
+        <div class="arrow branch">▼ price retraces into zone</div>
+
+        <div class="step api">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">API Call — Sonnet</div>
+            <div class="step-title">Retrace Confirmation</div>
+            <div class="step-desc">Sonnet confirms: is this a valid retrace entry? Sets entry, SL, TPs. Quality auto-graded "A" — full ICT sequence confirmed (sweep → displace → retrace).</div>
+          </div>
+        </div>
+        <div class="arrow branch">▼ confirmed = true</div>
+
+        <div class="step notify">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Notification #3 — THE TRADE SIGNAL</div>
+            <div class="step-title">🎯 ENTER LONG XAU/USD</div>
+            <div class="step-desc">Full entry signal: entry, calibrated SL, TPs with R:R, lot size, grade (A). Higher conviction — the full ICT sequence (sweep → displacement → retrace) was confirmed step by step. <strong>This is the one to trade.</strong></div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Processing</div>
+            <div class="step-title">Calibrate + Store Setup</div>
+            <div class="step-desc">ML calibration applied. Setup stored with <code>prospect_triggered=true</code>. Enters same resolution pipeline as Path 1.</div>
+          </div>
+        </div>
+        <div class="arrow">↓</div>
+
+        <div class="step">
+          <div class="step-dot"></div>
+          <div class="step-content">
+            <div class="step-label">Monitoring</div>
+            <div class="step-title">Pending Resolution</div>
+            <div class="step-desc">Same as Path 1: 5-min candle checks for SL/TP hit. On resolution → full feedback loop (Bayesian, dataset, features).</div>
+            <div class="timing-badge">⏱ Every 5 min</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot notify"></div> Notification (you see this)</div>
+    <div class="legend-item"><div class="legend-dot decision"></div> Decision point</div>
+    <div class="legend-item"><div class="legend-dot api"></div> API call (Haiku/Sonnet/Opus)</div>
+    <div class="legend-item"><div class="legend-dot process"></div> Processing step</div>
+  </div>
+
+  <!-- NOTIFICATION SUMMARY TABLE -->
+  <div class="section-title">All Notifications You Receive</div>
+  <table class="summary-table">
+    <thead>
+      <tr>
+        <th>Path</th>
+        <th>Notification</th>
+        <th>When</th>
+        <th>Action</th>
+        <th>Reliability</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Standard</td>
+        <td><span class="emoji">🔍</span> SETUP DETECTED</td>
+        <td>Immediately on detection</td>
+        <td>Watch — prepare pending order</td>
+        <td>Early warning only</td>
+      </tr>
+      <tr>
+        <td>Standard</td>
+        <td><strong>NEW LONG/SHORT Setup</strong></td>
+        <td>Price reaches entry (0.3%)</td>
+        <td><strong>Trade signal — enter</strong></td>
+        <td>Reliable ✓</td>
+      </tr>
+      <tr>
+        <td>Standard</td>
+        <td><span class="emoji">⚠️</span> ENTRY MISSED</td>
+        <td>Price blew past entry (0.5%+)</td>
+        <td>Decide: market entry or skip</td>
+        <td>Late — use caution</td>
+      </tr>
+      <tr style="border-top: 2px solid #333;">
+        <td>Prospect</td>
+        <td><span class="emoji">🔍</span> ZONE ALERT</td>
+        <td>15 min before killzone</td>
+        <td>Watch — know the zones</td>
+        <td>Pre-game awareness</td>
+      </tr>
+      <tr>
+        <td>Prospect</td>
+        <td><span class="emoji">⚡</span> DISPLACEMENT CONFIRMED</td>
+        <td>Sweep + displacement verified</td>
+        <td>Watch — wait for retrace</td>
+        <td>High conviction building</td>
+      </tr>
+      <tr>
+        <td>Prospect</td>
+        <td><strong><span class="emoji">🎯</span> ENTER LONG/SHORT</strong></td>
+        <td>Full sequence confirmed</td>
+        <td><strong>Trade signal — enter</strong></td>
+        <td><strong>Highest conviction ✓✓</strong></td>
+      </tr>
+    </tbody>
+  </table>
+
+</div>
+</body>
+</html>

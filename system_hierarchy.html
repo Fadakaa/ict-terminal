@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICT Terminal — Full System Hierarchy</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --orange: #d29922; --red: #f85149;
+    --purple: #bc8cff; --cyan: #39d2c0; --pink: #f778ba;
+    --yellow: #e3b341;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; background: var(--bg); color: var(--text); padding: 20px; }
+  h1 { text-align: center; font-size: 22px; margin-bottom: 6px; color: var(--accent); }
+  .subtitle { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .stats-bar { display: flex; justify-content: center; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }
+  .stat { text-align: center; }
+  .stat-val { font-size: 28px; font-weight: bold; color: var(--green); }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+
+  /* Controls */
+  .controls { display: flex; justify-content: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .ctrl-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-family: inherit; transition: all 0.2s; }
+  .ctrl-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .ctrl-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+  /* Search */
+  .search-box { display: flex; justify-content: center; margin-bottom: 20px; }
+  .search-box input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 8px; width: 400px; font-family: inherit; font-size: 13px; outline: none; }
+  .search-box input:focus { border-color: var(--accent); }
+  .search-box input::placeholder { color: var(--muted); }
+
+  /* Layer sections */
+  .layer { margin-bottom: 24px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .layer-header { padding: 12px 18px; cursor: pointer; display: flex; align-items: center; gap: 10px; user-select: none; }
+  .layer-header:hover { filter: brightness(1.2); }
+  .layer-chevron { transition: transform 0.2s; font-size: 12px; }
+  .layer-chevron.open { transform: rotate(90deg); }
+  .layer-title { font-size: 14px; font-weight: bold; flex: 1; }
+  .layer-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(255,255,255,0.1); }
+  .layer-body { padding: 0 18px 18px; display: none; }
+  .layer-body.open { display: block; }
+
+  /* Module cards */
+  .module-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
+  .module-card:hover { border-color: var(--accent); }
+  .module-card.highlight { border-color: var(--yellow); box-shadow: 0 0 8px rgba(227,179,65,0.3); }
+  .module-header { padding: 10px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .module-icon { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; flex-shrink: 0; }
+  .module-name { font-weight: bold; font-size: 13px; flex: 1; }
+  .module-purpose { font-size: 11px; color: var(--muted); flex: 2; }
+  .module-counts { display: flex; gap: 8px; font-size: 11px; }
+  .module-counts span { padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,0.06); }
+  .fn-count { color: var(--cyan); }
+  .cls-count { color: var(--purple); }
+  .meth-count { color: var(--pink); }
+
+  .module-body { display: none; padding: 0 14px 12px; }
+  .module-body.open { display: block; }
+
+  /* Function/class lists */
+  .section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .fn-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .fn-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: rgba(57,210,192,0.1); color: var(--cyan); border: 1px solid rgba(57,210,192,0.2); }
+  .fn-tag.private { opacity: 0.5; }
+  .fn-tag.highlight { background: rgba(227,179,65,0.2); color: var(--yellow); border-color: var(--yellow); }
+  .cls-block { margin-bottom: 8px; }
+  .cls-name { font-size: 12px; font-weight: bold; color: var(--purple); margin-bottom: 4px; }
+  .method-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: rgba(188,140,255,0.1); color: var(--purple); border: 1px solid rgba(188,140,255,0.15); }
+  .method-tag.private { opacity: 0.5; }
+  .method-tag.highlight { background: rgba(227,179,65,0.2); color: var(--yellow); border-color: var(--yellow); }
+  .method-tag.dunder { opacity: 0.35; }
+
+  /* Data flow diagram */
+  .flow-section { margin-bottom: 24px; }
+  .flow-title { text-align: center; font-size: 16px; color: var(--accent); margin-bottom: 16px; }
+  .flow-container { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .flow-row { display: flex; align-items: center; gap: 12px; }
+  .flow-box { padding: 10px 20px; border-radius: 8px; font-size: 12px; text-align: center; min-width: 180px; border: 1px solid; }
+  .flow-arrow { color: var(--muted); font-size: 18px; padding: 4px 0; }
+  .flow-arrow-h { color: var(--muted); font-size: 14px; }
+  .flow-external { background: rgba(248,81,73,0.1); border-color: var(--red); color: var(--red); }
+  .flow-data { background: rgba(57,210,192,0.1); border-color: var(--cyan); color: var(--cyan); }
+  .flow-analysis { background: rgba(88,166,255,0.1); border-color: var(--accent); color: var(--accent); }
+  .flow-ml { background: rgba(188,140,255,0.1); border-color: var(--purple); color: var(--purple); }
+  .flow-exec { background: rgba(63,185,80,0.1); border-color: var(--green); color: var(--green); }
+  .flow-notify { background: rgba(210,153,34,0.1); border-color: var(--orange); color: var(--orange); }
+
+  /* Toggle for private functions */
+  .toggle-private { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .toggle-private input { accent-color: var(--accent); }
+
+  @media (max-width: 800px) {
+    .module-header { flex-wrap: wrap; }
+    .module-purpose { flex-basis: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<h1>ICT Terminal — System Hierarchy</h1>
+<p class="subtitle">48 modules &middot; 252 functions &middot; 48 classes &middot; 330 methods &middot; 75 API endpoints</p>
+
+<div class="stats-bar">
+  <div class="stat"><div class="stat-val" id="total-modules">48</div><div class="stat-label">Modules</div></div>
+  <div class="stat"><div class="stat-val" style="color:var(--cyan)" id="total-fns">252</div><div class="stat-label">Functions</div></div>
+  <div class="stat"><div class="stat-val" style="color:var(--purple)" id="total-cls">48</div><div class="stat-label">Classes</div></div>
+  <div class="stat"><div class="stat-val" style="color:var(--pink)" id="total-meth">330</div><div class="stat-label">Methods</div></div>
+  <div class="stat"><div class="stat-val" style="color:var(--orange)" id="total-ep">75</div><div class="stat-label">Endpoints</div></div>
+</div>
+
+<div class="search-box">
+  <input type="text" id="search" placeholder="Search functions, classes, modules..." autocomplete="off">
+</div>
+
+<div class="controls">
+  <button class="ctrl-btn active" onclick="toggleAll(true)">Expand All Layers</button>
+  <button class="ctrl-btn" onclick="toggleAll(false)">Collapse All</button>
+  <button class="ctrl-btn" onclick="toggleModules(true)">Expand All Modules</button>
+  <button class="ctrl-btn" onclick="toggleModules(false)">Collapse Modules</button>
+  <label class="toggle-private"><input type="checkbox" id="showPrivate" checked onchange="togglePrivate()"> Show private (_) functions</label>
+</div>
+
+<div id="layers-container"></div>
+
+<script>
+// ========== DATA ==========
+const LAYERS = [
+  {
+    name: "Core Infrastructure",
+    color: "#f85149",
+    icon: "C",
+    desc: "Configuration, database, datasets, cost tracking, type models",
+    modules: [
+      { name: "config", purpose: "140+ configuration parameters + defaults", fns: ["get_config","make_test_config","reset_config"], classes: [] },
+      { name: "database", purpose: "SQLite trade logger (setups, outcomes, training runs)", fns: [], classes: [
+        { name: "TradeLogger", methods: ["__init__","_init_db","log_setup","log_outcome","get_training_data","get_completed_trade_count","get_setups_without_outcomes","log_training_run","get_last_training","get_bayesian_state","save_bayesian_state","get_trade_history","delete_setup","clear"] }
+      ]},
+      { name: "scanner_db", purpose: "SQLite scanner database — setups, prospects, lifecycle", fns: [], classes: [
+        { name: "ScannerDB", methods: ["__init__","_init_db","_conn","store_setup","get_pending","get_unnotified_setups","mark_notified","mark_detection_notified","get_history","resolve_setup","expire_old","expire_by_timeframe","find_duplicate","get_stats","update_api_cost","get_resolved_with_costs","get_resolved_setups","get_pnl_history","get_setups_by_killzone","store_session_recap","get_latest_session_recap","store_prospect","get_active_prospects","get_displaced_prospects","resolve_prospect","update_prospect_json","expire_killzone_prospects","record_lifecycle_notification","lifecycle_already_sent","lifecycle_max_stage_sent","get_lifecycle_thread_msg_id","get_lifecycle_history","get_recent_lifecycle","clear","_row_to_dict"] }
+      ]},
+      { name: "dataset", purpose: "Training dataset manager (CSV, weighted blending, regime balance)", fns: ["generate_negative_examples"], classes: [
+        { name: "TrainingDatasetManager", methods: ["__init__","_load","_save","ingest_wfo_trades","ingest_live_trade","get_blended_dataset","clear_live_trades","get_stats"] },
+        { name: "RegimeBalancer", methods: ["__init__","balance","get_regime_coverage","get_defensive_adjustment"] },
+        { name: "PriorValidator", methods: ["__init__","stress_test_priors","validate_before_anchoring"] },
+        { name: "DriftAlarm", methods: ["__init__","check_drift","cap_kappa"] }
+      ]},
+      { name: "cost_tracker", purpose: "Log API calls, enforce daily budget", fns: ["_compute_cost","get_cost_tracker"], classes: [
+        { name: "CostTracker", methods: ["__init__","_load","_save","log_call","flush","get_daily_summary","check_budget","is_warning","get_remaining_budget","get_setup_cost","get_history"] }
+      ]},
+      { name: "models", purpose: "Pydantic dataclass models (14 types)", fns: [], classes: [
+        { name: "CandleData", methods: [] }, { name: "OrderBlock", methods: [] }, { name: "FVG", methods: [] },
+        { name: "LiquidityLevel", methods: [] }, { name: "EntryData", methods: [] }, { name: "StopLossData", methods: [] },
+        { name: "TakeProfitData", methods: [] }, { name: "AnalysisJSON", methods: [] }, { name: "PredictionRequest", methods: [] },
+        { name: "PredictionResponse", methods: [] }, { name: "TradeOutcomeRequest", methods: [] },
+        { name: "SetupLogRequest", methods: [] }, { name: "ModelStatus", methods: [] }, { name: "WFORunRequest", methods: [] }
+      ]},
+      { name: "feature_schema", purpose: "Single source of truth for all 52 ML feature column names", fns: [], classes: [] }
+    ]
+  },
+  {
+    name: "Data Providers & Features",
+    color: "#39d2c0",
+    icon: "D",
+    desc: "OANDA API, 52-column feature engineering, intermarket analysis",
+    modules: [
+      { name: "data_providers", purpose: "OANDA & Twelve Data candle providers", fns: ["get_provider"], classes: [
+        { name: "CandleProvider", methods: ["fetch_candles","name"] },
+        { name: "TwelveDataProvider", methods: ["__init__","name","fetch_candles"] },
+        { name: "OandaProvider", methods: ["__init__","name","fetch_candles"] }
+      ]},
+      { name: "features", purpose: "52-column feature extraction (26 functions)", fns: ["compute_atr","_encode_strength","_encode_killzone","_encode_timeframe","_safe_divide","_encode_premium_discount","_encode_p3_phase","_encode_setup_quality","extract_features","_intermarket_or_nan","_extract_htf_features","_extract_narrative_features","_compute_entry_zone","classify_setup_type","detect_order_blocks","detect_fvgs","detect_liquidity","compute_market_structure","create_trade_labels","_extract_hour","engineer_features_from_candles","detect_swing_points","compute_ob_freshness","compute_fvg_fill_percentage","_default_htf_features","engineer_htf_features"], classes: [] },
+      { name: "intermarket", purpose: "Gold-DXY correlation, range position, yield direction", fns: ["_pct_change_series","_pearson_corr","_range_position","_parse_dt","align_candles","compute_intermarket_context"], classes: [] },
+      { name: "chart_renderer", purpose: "Render annotated candlestick charts with ICT overlays", fns: ["_parse_dt","_compute_atr","render_chart","render_chart_base64"], classes: [] }
+    ]
+  },
+  {
+    name: "Claude Analysis Bridge",
+    color: "#58a6ff",
+    icon: "A",
+    desc: "Parse Claude's narrative analysis into structured ML input, prompt engineering",
+    modules: [
+      { name: "claude_bridge", purpose: "Parse Claude's ICT analysis JSON → ML features (24 methods)", fns: [], classes: [
+        { name: "ClaudeAnalysisBridge", methods: ["__init__","parse_analysis","find_entry_candle","classify_setup_type","log_completed_trade","get_calibration_value","_map_killzone_to_session","_to_candle_list","_load_accuracy","_load_narrative_weights","_save_narrative_weights","get_narrative_weights","update_narrative_field_weights","_encode_killzone_from_parsed","_encode_htf_bias","_compute_htf_alignment","_compute_opus_agreement","_build_minimal_features","update_narrative_tracker","get_narrative_trust_by_segment","update_prospect_tracker","update_opus_tracker","get_opus_rejection_policy","_save_accuracy"] }
+      ]},
+      { name: "prompts", purpose: "19 prompt templates — ICT narrative, screening, prospects, lifecycle", fns: ["get_current_killzone","build_enhanced_ict_prompt","build_haiku_backtest_prompt","build_screen_prompt","_build_narrative_state_section","_build_regime_section","_build_intermarket_section","_build_narrative_trust_section","_build_recent_context_section","_build_setup_context_section","_build_narrative_feedback_block","build_opus_narrative_prompt","build_session_recap_prompt","build_prospect_prompt","build_displacement_check_prompt","build_retrace_confirmation_prompt","build_trigger_confirmation_prompt","build_validation_prompt","_slim_candles"], classes: [] },
+      { name: "recent_context", purpose: "Build recent context (resolutions, consumed zones, swept liquidity)", fns: ["build_recent_context","_query_recent_resolutions","format_recent_context","_time_ago","_fmt_price"], classes: [] },
+      { name: "narrative_state", purpose: "Persistent per-timeframe thesis tracking with invalidation", fns: ["check_invalidation"], classes: [
+        { name: "NarrativeStore", methods: ["__init__","_conn","_ensure_table","get_current","save","get_history","expire_stale","get_revision_rate","get_accuracy_metrics","apply_confidence_decay","_score_predictions","_row_to_dict"] }
+      ]},
+      { name: "narrative_bandit", purpose: "Multi-armed bandit for narrative prompt variant selection", fns: [], classes: [
+        { name: "NarrativeBandit", methods: ["__init__","_load","_save","is_active","select_arm","update_arm","retire_underperformers","maybe_generate_variant","get_state"] }
+      ]},
+      { name: "narrative_examples", purpose: "Store & retrieve gold example narratives for prompts", fns: [], classes: [
+        { name: "NarrativeExampleStore", methods: ["__init__","_load","_save","add_example","get_examples","_score","_evict_if_full"] }
+      ]}
+    ]
+  },
+  {
+    name: "ML Signal Fusion",
+    color: "#bc8cff",
+    icon: "M",
+    desc: "Bayesian beliefs, volatility regime, consensus grading, calibration",
+    modules: [
+      { name: "bayesian", purpose: "Beta distribution win rate + drawdown belief updater", fns: ["get_default_prior","update_beliefs","get_beliefs","adjust_confidence"], classes: [] },
+      { name: "volatility", purpose: "EWMA volatility + session scaling + regime detection", fns: ["_percentileofscore","compute_ewma_volatility","detect_session","get_session_factor","detect_regime","classify_regime","calibrate_volatility","scale_levels"], classes: [] },
+      { name: "consensus", purpose: "Blend AutoGluon, Bayesian, volatility → grade", fns: ["build_consensus","_compute_grade"], classes: [] },
+      { name: "calibrate", purpose: "6-layer SL/TP calibration engine", fns: [], classes: [
+        { name: "MLCalibrator", methods: ["__init__","calibrate_trade","_load_v1_session_stats","_load_v1_priors","_check_autogluon","_is_model_trustworthy","_run_autogluon","compute_setup_ev","_find_optimal_split","compute_kelly_size","_compute_multi3_enhancements","_find_historical_matches","_estimate_stop_pct","_map_session","_get_setup_type","_build_recommendation","_to_candle_list","_empty_result"] }
+      ]},
+      { name: "evaluation", purpose: "Post-mortem trade evaluation metrics", fns: ["_is_minimal_feature_row","_prepare_df","_train_and_eval","_compute_weaknesses","_compute_calibration","evaluate_classifier_walkforward"], classes: [] }
+    ]
+  },
+  {
+    name: "Prediction & Training",
+    color: "#f778ba",
+    icon: "P",
+    desc: "AutoGluon inference, model training, walk-forward optimization",
+    modules: [
+      { name: "prediction", purpose: "AutoGluon inference wrapper (8 functions)", fns: ["predict","_cold_start_response","_insufficient_data_response","_run_inference","_build_calibration","_enrich_with_consensus","_apply_wfo_filter","_fuzzy_match_setup_type"], classes: [] },
+      { name: "training", purpose: "AutoGluon model training pipeline", fns: ["_count_rich_rows","_save_model_meta","get_active_model_type","get_model_meta","is_multi3_active","train_classifier","train_quantile","should_retrain","_extract_narrative_feature_importance"], classes: [] },
+      { name: "wfo", purpose: "Walk-Forward Optimization backtest engine (5 classes)", fns: ["detect_regime","_compute_wfo_grade","build_setup_filter","save_report","load_report","update_bayesian_from_wfo","_fetch_candles_twelve_data","_print_report","main"], classes: [
+        { name: "WFOConfig", methods: [] }, { name: "FoldResult", methods: [] },
+        { name: "WFOReport", methods: ["to_dict","from_dict"] },
+        { name: "ICTSetupDetector", methods: ["__init__","detect_setups","_find_retracement_entry","_score_confluence","_score_quality","_find_rejection_entry","check_narrative_alignment"] },
+        { name: "WalkForwardEngine", methods: ["__init__","run","_train_fold_ag","_predict_ag","_predict_heuristic","_compute_fold_metrics","_aggregate_report"] }
+      ]},
+      { name: "backtest_generator", purpose: "Generate WFO backtest folds with structural detection", fns: [], classes: [
+        { name: "BacktestGenerator", methods: ["__init__","structural_scan","_deduplicate_candidates","_apply_regime_cap","generate","_find_4h_window","_find_intermarket_window","_strip_candle_dates","_classify_regime","_label_outcome","_add_entry_noise","_get_killzone","_rate_limit","_rate_limit_haiku","_call_haiku","_call_claude","_ingest_rows","_load_checkpoint","_save_checkpoint","_save_pass2_cache","_update_pass2_cache_progress","run_fidelity_check","_sanitize_for_json"] }
+      ]}
+    ]
+  },
+  {
+    name: "Execution & Notifications",
+    color: "#3fb950",
+    icon: "E",
+    desc: "Trade execution, entry placement, real-time alerts (macOS + Telegram)",
+    modules: [
+      { name: "execution", purpose: "Trade execution simulator", fns: ["_hour_to_session","_extract_hour"], classes: [
+        { name: "ExecutionSimulator", methods: ["__init__","simulate","_apply_costs"] }
+      ]},
+      { name: "entry_placement", purpose: "Optimal entry zone placement analysis", fns: ["compute_entry_position","identify_entry_zone","extract_entry_zone_metrics","compute_live_mfe_mae"], classes: [
+        { name: "EntryPlacementAnalyzer", methods: ["__init__","_load_stats","_save_stats","ingest_metric","compute_summary","_bin_by_position","_compute_group_stats","_find_optimal_bin","get_placement_guidance"] }
+      ]},
+      { name: "notifications", purpose: "22 notification functions — macOS + Telegram alerts", fns: ["_calc_lot_size","_esc","notify_zone_prospect","notify_displacement_confirmed","notify_entry_trigger","notify_setup_detected","notify_entry_missed","notify_new_setup","notify_budget_warning","notify_trade_resolved","notify_lifecycle","_build_lifecycle_message","_build_stage_1","_build_stage_2","_build_stage_3","_build_stage_4","_build_stage_5","_build_stage_6","_get_current_thesis","_send_macos","_send_telegram","_send_telegram_html"], classes: [] },
+      { name: "scheduler", purpose: "Scheduled backfill & recomputation tasks", fns: ["_is_market_active","_get_engine","start_scheduler","stop_scheduler","is_running","get_next_scan_time"], classes: [] }
+    ]
+  },
+  {
+    name: "Setup Profiling & Feedback Loops",
+    color: "#d29922",
+    icon: "F",
+    desc: "V3 feedback: setup DNA, killzone profiling, cost-per-winner, Haiku FN tracking",
+    modules: [
+      { name: "setup_dna", purpose: "Encode setup structure into DNA patterns", fns: ["encode_setup_dna","compute_similarity"], classes: [] },
+      { name: "setup_profiles", purpose: "Store & match setup DNA profiles", fns: [], classes: [
+        { name: "SetupProfileStore", methods: ["__init__","add_profile","find_similar","get_conditional_stats","get_learned_rules","profile_count","_load","_save"] }
+      ]},
+      { name: "killzone_profiler", purpose: "Track killzone performance — adaptive quality gates", fns: ["normalize_killzone"], classes: [
+        { name: "KillzoneProfiler", methods: ["__init__","compute_stats","compute_quality_gates","should_skip","get_scan_config","_save","load"] }
+      ]},
+      { name: "layer_performance", purpose: "Track calibration layer bullish/bearish performance", fns: [], classes: [
+        { name: "LayerPerformanceTracker", methods: ["__init__","_load","_save","ingest_trade","_extract_layer_distances","_empty_layer_stats","get_layer_report","get_adaptive_floor","full_recompute","flush"] }
+      ]},
+      { name: "cost_per_winner", purpose: "Correlate API cost with trade outcomes by segment", fns: [], classes: [
+        { name: "CostPerWinnerTracker", methods: ["__init__","_load","_save","_empty_segment","_empty_global","_segment_key","ingest_trade","_recompute_segment","_recompute_global","recompute_from_db","get_recommendations","should_reduce_scan","should_boost_scan","get_stats","get_segment_ranking"] }
+      ]},
+      { name: "haiku_fn_tracker", purpose: "Track Haiku false negatives — adaptive screening bypass", fns: [], classes: [
+        { name: "HaikuFNTracker", methods: ["__init__","_conn","_init_table","log_rejection","resolve_rejections","_get_forward_candles","expire_stale","get_fn_report","get_screening_adjustments","_get_cached_adjustments","should_bypass_haiku","should_loosen_haiku","get_stats","get_recent","_categorize_reason","_segment_action"] }
+      ]},
+      { name: "quality_filter", purpose: "Filter low-quality setups by confluence/grade", fns: [], classes: [
+        { name: "SetupQualityFilter", methods: ["__init__","filter_basic","export_for_review","grade_with_claude","_format_batch_for_grading"] }
+      ]},
+      { name: "intermarket_validator", purpose: "Validate intermarket signals against outcomes", fns: [], classes: [
+        { name: "IntermarketValidator", methods: ["__init__","score_intermarket_signal","analyze","_stratify_divergence","_stratify_killzone","_stratify_yield","_compute_segment","_compute_recommendation","_save","get_last_result"] }
+      ]}
+    ]
+  },
+  {
+    name: "Orchestration & API",
+    color: "#58a6ff",
+    icon: "O",
+    desc: "Main scanner engine (35 methods), FastAPI server (75 endpoints), V1 seeding",
+    modules: [
+      { name: "scanner", purpose: "Main scanning orchestration engine — both scan paths", fns: [], classes: [
+        { name: "ScannerEngine", methods: ["__init__","is_configured","get_status","scan_all_timeframes","scan_once","_analyze_and_store","check_entry_proximity","monitor_pending","_check_setup_against_history","_get_htf_candles","_get_candles","_fetch_candles_oanda","_fetch_candles","_fetch_correlated_candles","_call_opus_narrative","_generate_session_recap","_update_prospect_tracker","_generate_prospect_json","_prospect_killzone_zones","_get_prior_session_stats","_get_trigger_poll_interval","monitor_prospect_triggers","_check_displacement","_refine_entry_5min","_confirm_retrace_entry","_call_sonnet_short","_check_killzone_transition","_call_claude_validate","_call_claude_screen","_call_claude","_calibrate","_log_trade_complete","_trigger_post_resolution_scan","_maybe_auto_retrain","_hash_candles"] }
+      ]},
+      { name: "server", purpose: "FastAPI HTTP server — 75 endpoints", fns: ["_kill_stale_port","get_db","get_dataset_manager","health","status","predict_endpoint","log_setup","log_outcome","delete_setup","pending_outcomes","beliefs","retrain","model_info","model_evaluate","wfo_run","wfo_report","trades_history","dataset_stats","bayesian_drift","bayesian_reset","seed_endpoint","_seed_handler","claude_accuracy","calibration_value","prompt_enhanced","seed_stats","_get_scanner","scanner_pending","scanner_history","scanner_pnl","scanner_prospects","entry_placement_stats","entry_placement_guidance","entry_placement_backfill","entry_placement_recompute","calibration_layers","recompute_layers","sl_floor_info","cost_today","cost_history","cost_budget","intermarket_validation","intermarket_recompute","killzone_profile","killzone_recompute","narrative_trust_by_segment","opus_rejection_policy","killzone_gates","td_usage","get_candles","data_verify","backtest_status","backtest_meta","evaluation_dual","narrative_weights","narrative_examples","narrative_bandit_state","narrative_evolution","narrative_thesis_current","narrative_thesis_history","narrative_thesis_accuracy","scanner_status","scanner_trigger","scanner_monitor_trigger","haiku_fn_report","haiku_fn_stats","haiku_fn_adjustments","haiku_fn_recent","cost_per_winner_stats","cost_per_winner_ranking","cost_per_winner_recommendations","cost_per_winner_recompute","lifecycle_recent","lifecycle_for_thesis","context_recent"], classes: [] },
+      { name: "seed", purpose: "V1 Data Harvester — seeds ML models with baseline distributions", fns: ["fetch_candles","main"], classes: [
+        { name: "V1DataHarvester", methods: ["__init__","harvest_v1_data","seed_bayesian","seed_training_dataset","_classify_session"] }
+      ]}
+    ]
+  },
+  {
+    name: "Backfill & Diagnostics",
+    color: "#8b949e",
+    icon: "B",
+    desc: "Retroactive data enrichment, diagnostic tools, maintenance scripts",
+    modules: [
+      { name: "backfill", purpose: "Bulk backfill: accuracy, dataset, zones, features, MFE/MAE", fns: ["_session_from_timestamp","backfill_accuracy_tracker","backfill_training_dataset","main","backfill_features_from_stored_json"], classes: [] },
+      { name: "backfill_features", purpose: "Re-extract 52-col features from stored JSON + OANDA", fns: ["_load_resolved_setups","_extract_from_stored_json","run_backfill","backfill_regimes","_fetch_instrument_candles","backfill_intermarket"], classes: [] },
+      { name: "backfill_entry_zones", purpose: "Compute entry zone positions for existing setups", fns: ["backfill_entry_zones"], classes: [] },
+      { name: "backfill_mfe_mae", purpose: "Backfill MFE/MAE from OANDA 5min candles", fns: ["_get_atr","backfill_mfe_mae"], classes: [] },
+      { name: "backfill_profiles", purpose: "Encode setup DNA profiles from resolved trades", fns: ["backfill_profiles","main"], classes: [] },
+      { name: "diagnose", purpose: "Diagnostic tools for debugging predictions", fns: ["_classify_wr_impact","_classify_pf_impact","_classify_grade_change","_compute_verdict","_format_comparison","_print_step_result","_print_summary","main"], classes: [
+        { name: "StepResult", methods: ["to_dict","from_dict"] },
+        { name: "VariableDiagnostic", methods: ["__init__","_build_wfo_config","_run_step","_compute_cost_adjusted_pf","_build_compound_steps","_save_results","_load_results","_prompt_user","run","run_ab_test"] }
+      ]}
+    ]
+  }
+];
+
+// ========== RENDER ==========
+const container = document.getElementById('layers-container');
+
+function renderTag(name, cls, isHighlight) {
+  const isPrivate = name.startsWith('_') && !name.startsWith('__');
+  const isDunder = name.startsWith('__') && name.endsWith('__');
+  let classes = cls;
+  if (isPrivate) classes += ' private';
+  if (isDunder) classes += ' dunder';
+  if (isHighlight) classes += ' highlight';
+  return `<span class="${classes}" data-name="${name.toLowerCase()}">${name}</span>`;
+}
+
+function renderModule(mod, layerColor) {
+  const fnCount = mod.fns.length;
+  const clsCount = mod.classes.length;
+  const methCount = mod.classes.reduce((s,c) => s + c.methods.length, 0);
+
+  let body = '';
+
+  if (fnCount > 0) {
+    body += `<div class="section-label">Functions (${fnCount})</div><div class="fn-list">`;
+    for (const fn of mod.fns) body += renderTag(fn, 'fn-tag', false);
+    body += `</div>`;
+  }
+
+  for (const cls of mod.classes) {
+    body += `<div class="cls-block"><div class="cls-name">${cls.name}</div>`;
+    if (cls.methods.length > 0) {
+      body += `<div class="fn-list">`;
+      for (const m of cls.methods) body += renderTag(m, 'method-tag', false);
+      body += `</div>`;
+    } else {
+      body += `<div style="font-size:11px;color:var(--muted);margin-left:8px;">dataclass (no methods)</div>`;
+    }
+    body += `</div>`;
+  }
+
+  if (!body) body = `<div style="font-size:11px;color:var(--muted);">Constants / schema only</div>`;
+
+  const countsHtml = [
+    fnCount > 0 ? `<span class="fn-count">${fnCount} fn</span>` : '',
+    clsCount > 0 ? `<span class="cls-count">${clsCount} cls</span>` : '',
+    methCount > 0 ? `<span class="meth-count">${methCount} meth</span>` : ''
+  ].filter(Boolean).join('');
+
+  return `<div class="module-card" data-module="${mod.name.toLowerCase()}">
+    <div class="module-header" onclick="toggleModule(this)">
+      <div class="module-icon" style="background:${layerColor}22;color:${layerColor};border:1px solid ${layerColor}44;">${mod.name[0].toUpperCase()}</div>
+      <div class="module-name">${mod.name}.py</div>
+      <div class="module-purpose">${mod.purpose}</div>
+      <div class="module-counts">${countsHtml}</div>
+    </div>
+    <div class="module-body">${body}</div>
+  </div>`;
+}
+
+function renderLayer(layer, idx) {
+  const totalFns = layer.modules.reduce((s,m) => s + m.fns.length, 0);
+  const totalCls = layer.modules.reduce((s,m) => s + m.classes.length, 0);
+  const totalMethods = layer.modules.reduce((s,m) => s + m.classes.reduce((ss,c) => ss + c.methods.length, 0), 0);
+
+  let modulesHtml = '';
+  for (const mod of layer.modules) {
+    modulesHtml += renderModule(mod, layer.color);
+  }
+
+  return `<div class="layer" data-layer="${idx}">
+    <div class="layer-header" style="background:${layer.color}15;" onclick="toggleLayer(this)">
+      <span class="layer-chevron">&#9654;</span>
+      <div class="module-icon" style="background:${layer.color}22;color:${layer.color};border:1px solid ${layer.color}44;">${layer.icon}</div>
+      <div class="layer-title" style="color:${layer.color}">${layer.name}</div>
+      <div style="flex:1;font-size:11px;color:var(--muted)">${layer.desc}</div>
+      <div class="layer-badge">${layer.modules.length} modules &middot; ${totalFns} fn &middot; ${totalCls} cls &middot; ${totalMethods} meth</div>
+    </div>
+    <div class="layer-body">${modulesHtml}</div>
+  </div>`;
+}
+
+// Build all layers
+let html = '';
+for (let i = 0; i < LAYERS.length; i++) {
+  html += renderLayer(LAYERS[i], i);
+}
+container.innerHTML = html;
+
+// ========== INTERACTIONS ==========
+function toggleLayer(header) {
+  const chevron = header.querySelector('.layer-chevron');
+  const body = header.nextElementSibling;
+  chevron.classList.toggle('open');
+  body.classList.toggle('open');
+}
+
+function toggleModule(header) {
+  header.nextElementSibling.classList.toggle('open');
+}
+
+function toggleAll(open) {
+  document.querySelectorAll('.layer-chevron').forEach(c => open ? c.classList.add('open') : c.classList.remove('open'));
+  document.querySelectorAll('.layer-body').forEach(b => open ? b.classList.add('open') : b.classList.remove('open'));
+}
+
+function toggleModules(open) {
+  document.querySelectorAll('.module-body').forEach(b => open ? b.classList.add('open') : b.classList.remove('open'));
+}
+
+function togglePrivate() {
+  const show = document.getElementById('showPrivate').checked;
+  document.querySelectorAll('.fn-tag.private, .method-tag.private').forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+// Search
+const searchInput = document.getElementById('search');
+searchInput.addEventListener('input', function() {
+  const q = this.value.toLowerCase().trim();
+
+  // Clear all highlights
+  document.querySelectorAll('.highlight').forEach(el => el.classList.remove('highlight'));
+  document.querySelectorAll('.module-card.highlight').forEach(el => el.classList.remove('highlight'));
+
+  if (!q) return;
+
+  // Highlight matching tags
+  document.querySelectorAll('.fn-tag, .method-tag').forEach(tag => {
+    const name = tag.getAttribute('data-name');
+    if (name && name.includes(q)) {
+      tag.classList.add('highlight');
+      // Open parent containers
+      const modBody = tag.closest('.module-body');
+      if (modBody) modBody.classList.add('open');
+      const layerBody = tag.closest('.layer-body');
+      if (layerBody) {
+        layerBody.classList.add('open');
+        layerBody.previousElementSibling.querySelector('.layer-chevron').classList.add('open');
+      }
+    }
+  });
+
+  // Highlight matching modules
+  document.querySelectorAll('.module-card').forEach(card => {
+    const name = card.getAttribute('data-module');
+    if (name && name.includes(q)) {
+      card.classList.add('highlight');
+      const layerBody = card.closest('.layer-body');
+      if (layerBody) {
+        layerBody.classList.add('open');
+        layerBody.previousElementSibling.querySelector('.layer-chevron').classList.add('open');
+      }
+    }
+  });
+
+  // Highlight matching class names
+  document.querySelectorAll('.cls-name').forEach(cls => {
+    if (cls.textContent.toLowerCase().includes(q)) {
+      const card = cls.closest('.module-card');
+      if (card) card.classList.add('highlight');
+      const modBody = cls.closest('.module-body');
+      if (modBody) modBody.classList.add('open');
+      const layerBody = cls.closest('.layer-body');
+      if (layerBody) {
+        layerBody.classList.add('open');
+        layerBody.previousElementSibling.querySelector('.layer-chevron').classList.add('open');
+      }
+    }
+  });
+});
+
+// Open first layer by default
+document.querySelector('.layer-chevron').classList.add('open');
+document.querySelector('.layer-body').classList.add('open');
+</script>
+</body>
+</html>

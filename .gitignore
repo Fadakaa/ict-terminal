@@ -1,0 +1,43 @@
+# Environment
+.env
+
+# Node
+node_modules/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# ML models + runtime data (large, generated)
+ml/models/classifier*/
+ml/models/quantile*/
+ml/models/*.db
+ml/models/*.db-wal
+ml/models/*.db-shm
+ml/models/*.json
+ml/models/*.parquet
+ml/models/*.csv
+ml/models/.fuse_hidden*
+
+# Root-level model copies (symlinks or duplicates)
+models/
+*.db
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Office docs + temp files (planning artifacts, not source)
+*.docx
+*.pptx
+~$*

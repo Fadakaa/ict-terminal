@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICT Terminal — Decision Intelligence Flow</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #1c2128; --border: #30363d;
+    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --orange: #d29922; --red: #f85149;
+    --purple: #bc8cff; --cyan: #39d2c0; --pink: #f778ba;
+    --yellow: #e3b341;
+    /* Decision makers */
+    --haiku: #39d2c0; --sonnet: #58a6ff; --opus: #bc8cff;
+    --ml: #f778ba; --narrative: #d29922; --feedback: #3fb950;
+    --data: #8b949e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; background: var(--bg); color: var(--text); padding: 20px; overflow-x: auto; }
+
+  h1 { text-align: center; font-size: 20px; color: var(--accent); margin-bottom: 4px; }
+  .subtitle { text-align: center; color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+
+  /* Legend */
+  .legend { display: flex; justify-content: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
+
+  /* Tab system */
+  .tabs { display: flex; justify-content: center; gap: 4px; margin-bottom: 20px; }
+  .tab { padding: 8px 18px; border-radius: 8px 8px 0 0; background: var(--surface); border: 1px solid var(--border); border-bottom: none; color: var(--muted); cursor: pointer; font-family: inherit; font-size: 12px; transition: all 0.2s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { background: var(--surface2); color: var(--accent); border-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Flow canvas */
+  .flow { position: relative; min-height: 600px; padding: 20px; }
+
+  /* Node styling */
+  .node { position: absolute; border-radius: 10px; padding: 10px 14px; font-size: 11px; border: 2px solid; min-width: 160px; text-align: center; transition: all 0.3s; cursor: default; z-index: 2; }
+  .node:hover { transform: scale(1.05); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+  .node-title { font-weight: bold; font-size: 12px; margin-bottom: 3px; }
+  .node-detail { font-size: 10px; opacity: 0.7; line-height: 1.4; }
+  .node-module { font-size: 9px; opacity: 0.5; margin-top: 4px; font-style: italic; }
+  .node-badge { position: absolute; top: -8px; right: -8px; font-size: 9px; padding: 2px 6px; border-radius: 8px; font-weight: bold; }
+
+  /* Color classes */
+  .n-haiku { background: rgba(57,210,192,0.08); border-color: var(--haiku); color: var(--haiku); }
+  .n-haiku .node-badge { background: var(--haiku); color: var(--bg); }
+  .n-sonnet { background: rgba(88,166,255,0.08); border-color: var(--sonnet); color: var(--sonnet); }
+  .n-sonnet .node-badge { background: var(--sonnet); color: var(--bg); }
+  .n-opus { background: rgba(188,140,255,0.08); border-color: var(--opus); color: var(--opus); }
+  .n-opus .node-badge { background: var(--opus); color: var(--bg); }
+  .n-ml { background: rgba(247,120,186,0.08); border-color: var(--ml); color: var(--ml); }
+  .n-ml .node-badge { background: var(--ml); color: var(--bg); }
+  .n-narrative { background: rgba(210,153,34,0.08); border-color: var(--narrative); color: var(--narrative); }
+  .n-narrative .node-badge { background: var(--narrative); color: var(--bg); }
+  .n-feedback { background: rgba(63,185,80,0.08); border-color: var(--feedback); color: var(--feedback); }
+  .n-feedback .node-badge { background: var(--feedback); color: var(--bg); }
+  .n-data { background: rgba(139,148,158,0.08); border-color: var(--data); color: var(--data); }
+  .n-data .node-badge { background: var(--data); color: var(--bg); }
+  .n-you { background: rgba(248,81,73,0.1); border-color: var(--red); color: var(--red); }
+  .n-you .node-badge { background: var(--red); color: #fff; }
+
+  /* SVG arrows */
+  svg.arrows { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+  .arrow-line { stroke-width: 2; fill: none; opacity: 0.5; }
+  .arrow-head { fill-opacity: 0.6; }
+  .arrow-label { font-size: 9px; font-family: inherit; fill: var(--muted); }
+
+  /* Gate/decision diamond */
+  .gate { position: absolute; width: 36px; height: 36px; border: 2px solid var(--yellow); background: rgba(227,179,65,0.15); transform: rotate(45deg); z-index: 3; display: flex; align-items: center; justify-content: center; }
+  .gate-text { transform: rotate(-45deg); font-size: 9px; color: var(--yellow); font-weight: bold; }
+
+  /* Swim lanes for Tab 1 */
+  .swimlane { position: absolute; border-left: 1px dashed; padding-left: 12px; opacity: 0.3; }
+  .swimlane-label { writing-mode: vertical-rl; text-orientation: mixed; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; }
+
+  /* Annotation callouts */
+  .callout { position: absolute; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 10px; color: var(--muted); max-width: 220px; line-height: 1.5; z-index: 2; }
+  .callout strong { color: var(--text); }
+  .callout::before { content: ''; position: absolute; width: 8px; height: 8px; background: var(--surface2); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
+  .callout.arrow-left::before { left: -5px; top: 12px; transform: rotate(-45deg); }
+  .callout.arrow-top::before { top: -5px; left: 20px; transform: rotate(45deg); }
+  .callout.arrow-right::before { right: -5px; top: 12px; transform: rotate(135deg); }
+
+  /* Info panels */
+  .info-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
+  .info-panel h3 { color: var(--accent); font-size: 14px; margin-bottom: 8px; }
+  .info-panel p { font-size: 12px; line-height: 1.6; color: var(--muted); }
+  .info-panel p strong { color: var(--text); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+
+  /* Highlight box */
+  .highlight-box { border-left: 3px solid; padding: 10px 14px; margin: 8px 0; border-radius: 0 6px 6px 0; font-size: 11px; line-height: 1.6; }
+  .highlight-box.hb-narrative { border-color: var(--narrative); background: rgba(210,153,34,0.06); }
+  .highlight-box.hb-ml { border-color: var(--ml); background: rgba(247,120,186,0.06); }
+  .highlight-box.hb-opus { border-color: var(--opus); background: rgba(188,140,255,0.06); }
+  .highlight-box.hb-feedback { border-color: var(--feedback); background: rgba(63,185,80,0.06); }
+
+  /* Flow list (vertical) for Tab 3 */
+  .vflow { display: flex; flex-direction: column; gap: 0; align-items: center; }
+  .vflow-step { display: flex; align-items: stretch; width: 100%; max-width: 900px; }
+  .vflow-line { width: 40px; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+  .vflow-dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid; flex-shrink: 0; }
+  .vflow-connector { width: 2px; flex: 1; }
+  .vflow-card { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin: 4px 0; background: var(--surface); }
+  .vflow-card h4 { font-size: 12px; margin-bottom: 4px; }
+  .vflow-card p { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .vflow-card .code { font-size: 10px; color: var(--accent); background: rgba(88,166,255,0.1); padding: 2px 6px; border-radius: 3px; }
+  .vflow-right { margin-left: 12px; font-size: 10px; color: var(--muted); width: 160px; flex-shrink: 0; padding-top: 12px; }
+  .vflow-right .who { font-weight: bold; }
+
+  /* Decision table */
+  .dtable { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 12px; }
+  .dtable th { text-align: left; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); color: var(--accent); font-weight: bold; }
+  .dtable td { padding: 8px 12px; border: 1px solid var(--border); color: var(--text); vertical-align: top; }
+  .dtable tr:hover td { background: rgba(88,166,255,0.04); }
+  .who-tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; margin: 1px 2px; }
+  .who-haiku { background: rgba(57,210,192,0.15); color: var(--haiku); }
+  .who-sonnet { background: rgba(88,166,255,0.15); color: var(--sonnet); }
+  .who-opus { background: rgba(188,140,255,0.15); color: var(--opus); }
+  .who-ml { background: rgba(247,120,186,0.15); color: var(--ml); }
+  .who-narrative { background: rgba(210,153,34,0.15); color: var(--narrative); }
+  .who-feedback { background: rgba(63,185,80,0.15); color: var(--feedback); }
+  .who-code { background: rgba(139,148,158,0.15); color: var(--data); }
+</style>
+</head>
+<body>
+
+<h1>Decision Intelligence Flow</h1>
+<p class="subtitle">Who decides what, where state lives, and how outcomes feed back</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:var(--haiku)"></div>Haiku (Screener)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--sonnet)"></div>Sonnet (Analyst)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--opus)"></div>Opus (Strategist)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--narrative)"></div>Narrative Engine</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--ml)"></div>ML / AutoGluon</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--feedback)"></div>Feedback Loops</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--data)"></div>Data / Features</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>You (Trader)</div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab(0)">Standard Path</div>
+  <div class="tab" onclick="showTab(1)">Who Decides What</div>
+  <div class="tab" onclick="showTab(2)">Narrative Engine Deep Dive</div>
+  <div class="tab" onclick="showTab(3)">ML Calibration Layers</div>
+  <div class="tab" onclick="showTab(4)">Feedback Loops</div>
+</div>
+
+<!-- ═══════════════════════════════════════ TAB 0: STANDARD PATH ═══════════════════════════════════════ -->
+<div class="tab-content active" id="tab0">
+  <div class="info-panel">
+    <h3>Standard Scan Path — Every 15min to 1day</h3>
+    <p>This is the main flow for every scan cycle. Follow the numbered steps. <strong>Colour = who's making the decision.</strong> Orange nodes are the Narrative Engine maintaining state between scans. Purple is Opus thinking strategically. Blue is Sonnet doing the trade analysis. Pink is ML adjusting the numbers.</p>
+  </div>
+
+  <div class="vflow">
+    <!-- Step 1: Timer fires -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--data);background:var(--data)"></div><div class="vflow-connector" style="background:var(--data)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--data)">1. Scheduler Fires</h4>
+        <p>Timer triggers <span class="code">scan_all_timeframes()</span> in scanner.py. Checks which timeframes have new candle data via hash comparison. Only proceeds if candles actually changed.</p>
+        <p style="margin-top:4px"><strong>Candle counts:</strong> 15min→96, 1H→120, 4H→40, 1D→40</p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--data)">SCHEDULER</span><br>scheduler.py<br>scanner.py</div>
+    </div>
+
+    <!-- Step 2: Narrative state fetch -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--narrative);background:var(--narrative)"></div><div class="vflow-connector" style="background:var(--narrative)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--narrative)">2. Narrative Engine — Fetch Previous Thesis</h4>
+        <p><span class="code">NarrativeStore.get_current(timeframe)</span> retrieves the last thesis Sonnet produced for this timeframe. Runs <span class="code">check_invalidation()</span> against current price — has price blown through the invalidation level?</p>
+        <div class="highlight-box hb-narrative">
+          <strong>Structural Contradiction Check:</strong> Computes <span class="code">compute_market_structure()</span> score. If thesis says BULLISH but structure scores bearish (<-0.2), injects a contradiction warning into the prompt so Sonnet is forced to re-evaluate rather than anchoring on its old thesis.
+        </div>
+        <p style="margin-top:4px"><strong>State persists between scans.</strong> This is the memory of what Claude thought last time.</p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--narrative)">NARRATIVE ENGINE</span><br>narrative_state.py<br>features.py (structure)<br><br>Zero API cost</div>
+    </div>
+
+    <!-- Step 3: Haiku screen -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--haiku);background:var(--haiku)"></div><div class="vflow-connector" style="background:var(--haiku)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--haiku)">3. Haiku Pre-Screen — "Is there anything here?"</h4>
+        <p><span class="code">_call_claude_screen()</span> sends candles to Haiku (cheapest model, ~$0.001/call). Returns <strong>setup_possible: true/false</strong>.</p>
+        <div class="highlight-box hb-feedback">
+          <strong>Adaptive bypass (P5):</strong> <span class="code">HaikuFNTracker.should_bypass_haiku()</span> checks false-negative rates per timeframe×killzone. If Haiku has been wrong ≥60% of the time for this segment, it's bypassed entirely. If ≥40% + confluence≥2, its "no" is overridden.
+        </div>
+        <p style="margin-top:4px"><strong>Decision:</strong> PASS (continue) or REJECT (log rejection for FN tracking, exit)</p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--haiku)">HAIKU</span><br>prompts.py (screen)<br>haiku_fn_tracker.py<br><br>~$0.001 per call</div>
+    </div>
+
+    <!-- Step 4: Intermarket -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--data);background:var(--data)"></div><div class="vflow-connector" style="background:var(--data)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--data)">4. Intermarket Context — DXY + US10Y</h4>
+        <p>For 1H+ timeframes: <span class="code">compute_intermarket_context()</span> fetches EUR/USD (inverted→DXY proxy) and US10Y from OANDA. Computes gold-DXY 20-bar correlation, DXY range position, yield direction.</p>
+        <p style="margin-top:4px"><strong>Adaptive skip (P7):</strong> If IntermarketValidator says signals are "noise" for this segment, skip to save tokens.</p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--data)">DATA LAYER</span><br>intermarket.py<br>data_providers.py<br><br>Zero API cost (OANDA)</div>
+    </div>
+
+    <!-- Step 5: Opus narrative -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--opus);background:var(--opus)"></div><div class="vflow-connector" style="background:var(--opus)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--opus)">5. Opus HTF Narrative — "What's the macro story?"</h4>
+        <p><span class="code">_call_opus_narrative()</span> sends 4H (40 bars), Daily (45 bars), Weekly (12 bars) candles + intermarket to Opus. Returns:</p>
+        <p style="margin-top:4px">• <strong>directional_bias</strong> (bullish/bearish/neutral)<br>
+        • <strong>power_of_3_phase</strong> (accumulation/manipulation/distribution)<br>
+        • <strong>phase_confidence</strong> (0-1)<br>
+        • <strong>macro_narrative</strong> (free text explanation)<br>
+        • <strong>key_levels</strong> (where to watch)</p>
+        <div class="highlight-box hb-opus">
+          <strong>Cached for 1 hour</strong> — same Opus narrative is reused across multiple TF scans within the same hour. This is the most expensive call (~$0.05-0.10).
+        </div>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--opus)">OPUS</span><br>prompts.py (opus)<br>scanner.py<br><br>~$0.05-0.10 per call<br>(cached 1h)</div>
+    </div>
+
+    <!-- Step 6: Setup context -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--feedback);background:var(--feedback)"></div><div class="vflow-connector" style="background:var(--feedback)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--feedback)">6. Historical Setup Context — "What has worked before?"</h4>
+        <p>Zero-cost data retrieval from feedback stores:</p>
+        <p style="margin-top:4px">• <span class="code">SetupProfileStore.get_learned_rules()</span> — "When these confluences present in London on 15min, WR is 78%"<br>
+        • <span class="code">EntryPlacementAnalyzer.get_placement_guidance()</span> — "OB midpoint entries outperform edge"<br>
+        • <span class="code">build_recent_context()</span> — recent resolutions, consumed zones, swept liquidity</p>
+        <div class="highlight-box hb-feedback">
+          All of this is injected into Sonnet's prompt so it can <strong>see its own track record</strong> and adjust accordingly.
+        </div>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--feedback)">FEEDBACK DATA</span><br>setup_profiles.py<br>entry_placement.py<br>recent_context.py<br><br>Zero API cost</div>
+    </div>
+
+    <!-- Step 7: Sonnet analysis -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--sonnet);background:rgba(88,166,255,0.4)"></div><div class="vflow-connector" style="background:var(--sonnet)"></div></div>
+      <div class="vflow-card" style="border-color:var(--sonnet);border-width:2px;">
+        <h4 style="color:var(--sonnet);font-size:13px;">7. ★ SONNET ANALYSIS — The Core Decision</h4>
+        <p><span class="code">_call_claude()</span> sends <strong>everything</strong> to Sonnet in one mega-prompt built by <span class="code">build_enhanced_ict_prompt()</span>:</p>
+        <p style="margin-top:6px">
+          <strong>Inputs Sonnet receives:</strong><br>
+          • Execution-TF candles (OHLCV) + HTF candles<br>
+          • Previous thesis from Narrative Engine (with invalidation status + structural contradiction warnings)<br>
+          • Opus macro narrative (bias, P3 phase, key levels)<br>
+          • Intermarket context (DXY correlation, yield direction)<br>
+          • Recent context (what resolved recently, consumed zones)<br>
+          • Learned rules from setup profiles + entry placement guidance<br>
+          • Narrative trust scores per segment<br>
+          • Regime info (volatility classification)
+        </p>
+        <p style="margin-top:6px">
+          <strong>Sonnet decides:</strong><br>
+          • Direction (long/short) + entry price<br>
+          • Stop loss + take profits (SL/TP1/TP2/TP3)<br>
+          • Setup quality grade (A/B/C/D)<br>
+          • ICT elements present (OB, FVG, sweep, BOS/CHoCH)<br>
+          • Killzone classification<br>
+          • <strong>narrative_state</strong> — its updated thesis for the Narrative Engine
+        </p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--sonnet)">SONNET</span><br>prompts.py (enhanced)<br>scanner.py<br><br>~$0.02-0.04 per call<br><br><strong>This is the primary<br>trade decision maker</strong></div>
+    </div>
+
+    <!-- Step 8: Save narrative -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--narrative);background:var(--narrative)"></div><div class="vflow-connector" style="background:var(--narrative)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--narrative)">8. Narrative Engine — Save Updated Thesis</h4>
+        <p><span class="code">NarrativeStore.save(timeframe, narrative_state)</span> persists Sonnet's thesis. Detects if this is a <strong>continuation</strong> (same bias) or <strong>revision</strong> (bias changed). Increments scan_count.</p>
+        <p style="margin-top:4px"><strong>Lifecycle notifications:</strong><br>
+          • Stage 1: THESIS_FORMING (new thesis, confidence ≥0.5)<br>
+          • Stage 2: THESIS_CONFIRMED (survived 2+ scans, rising confidence)<br>
+          • Stage 6: THESIS_REVISED (direction changed + pending setup exists)
+        </p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--narrative)">NARRATIVE ENGINE</span><br>narrative_state.py<br>notifications.py<br><br>Persists to SQLite</div>
+    </div>
+
+    <!-- Step 9: Filters -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--data);background:var(--data)"></div><div class="vflow-connector" style="background:var(--data)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--data)">9. Filters — Duplicate, Entry-Passed, R:R Check</h4>
+        <p>Mechanical filters (no AI, no ML):</p>
+        <p style="margin-top:4px">
+          • <strong>Duplicate detection</strong> — same direction+price within time window<br>
+          • <strong>Entry-passed check</strong> — price already beyond entry (look-ahead bias prevention)<br>
+          • <strong>TP1 R:R minimum</strong> — reject if TP1 R:R < 0.6
+        </p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--data)">CODE LOGIC</span><br>scanner.py<br>scanner_db.py</div>
+    </div>
+
+    <!-- Step 10: ML Calibration -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--ml);background:var(--ml)"></div><div class="vflow-connector" style="background:var(--ml)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--ml)">10. ML Calibration — "Adjust the numbers"</h4>
+        <p><span class="code">_calibrate()</span> → <span class="code">ClaudeAnalysisBridge.parse_analysis()</span> → <span class="code">MLCalibrator.calibrate_trade()</span></p>
+        <p style="margin-top:4px">Runs Sonnet's entry/SL/TP through <strong>6 layers</strong>:</p>
+        <div class="highlight-box hb-ml">
+          <strong>Layer 1:</strong> Volatility Calibrator — ATR + session scaling + regime<br>
+          <strong>Layer 2:</strong> V1 Session Stats — baseline drawdown distributions from 1151 simulated trades<br>
+          <strong>Layer 3:</strong> Bayesian Beliefs — learned win rate (Beta distribution, alpha/beta from live trades)<br>
+          <strong>Layer 4:</strong> AutoGluon Quantile — ML model predicts optimal SL/TP bands (if trained)<br>
+          <strong>Layer 5:</strong> Historical Pattern Matching — similar setups by volatility profile<br>
+          <strong>Layer 6:</strong> Consensus — widest SL, median TPs across all layers
+        </div>
+        <p style="margin-top:4px"><strong>Output:</strong> Calibrated SL/TP (usually wider SL than Sonnet gave, to survive gold volatility)</p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--ml)">ML STACK</span><br>claude_bridge.py<br>calibrate.py<br>volatility.py<br>bayesian.py<br>prediction.py<br><br>Zero API cost</div>
+    </div>
+
+    <!-- Step 11: Setup DNA -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--feedback);background:var(--feedback)"></div><div class="vflow-connector" style="background:var(--feedback)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--feedback)">11. Setup DNA — "Has this pattern won before?"</h4>
+        <p><span class="code">encode_setup_dna()</span> + <span class="code">SetupProfileStore.get_conditional_stats()</span></p>
+        <p style="margin-top:4px">Encodes the setup into a DNA string (direction + killzone + TF + ICT elements). Checks historical win rate of similar DNA patterns.</p>
+        <p style="margin-top:4px">
+          • <strong>&lt;35% WR + 15+ matches</strong> → Downgrade (A→B, B→C)<br>
+          • <strong>&gt;70% WR + 15+ matches</strong> → Upgrade (C→B, D→C)
+        </p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--feedback)">FEEDBACK</span><br>setup_dna.py<br>setup_profiles.py<br><br>Zero API cost</div>
+    </div>
+
+    <!-- Step 12: Opus validation -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--opus);background:var(--opus)"></div><div class="vflow-connector" style="background:var(--opus)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--opus)">12. Opus Validation — "Should we actually trade this?"</h4>
+        <p><span class="code">_call_claude_validate()</span> sends Sonnet's complete analysis to Opus. Only for A and B grade setups.</p>
+        <p style="margin-top:4px"><strong>Opus verdicts:</strong><br>
+          • <strong>validated</strong> → proceed, "Opus validated" badge<br>
+          • <strong>downgraded</strong> → quality lowered (e.g., A→B)<br>
+          • <strong>rejected</strong> → stored as shadow trade (tracked but not notified)
+        </p>
+        <div class="highlight-box hb-opus">
+          <strong>Self-correcting:</strong> <span class="code">get_opus_rejection_policy()</span> tracks if Opus-rejected setups would have won. If Opus false-negative rate is high, rejections are overridden to downgrades instead.
+        </div>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--opus)">OPUS</span><br>prompts.py (validate)<br>claude_bridge.py<br><br>~$0.03-0.05 per call<br>(A/B grades only)</div>
+    </div>
+
+    <!-- Step 13: Killzone gate -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--feedback);background:var(--feedback)"></div><div class="vflow-connector" style="background:var(--feedback)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--feedback)">13. Killzone Quality Gate — "Is this KZ worth trading?"</h4>
+        <p><span class="code">KillzoneProfiler.should_skip()</span> — learned per-killzone quality bars. E.g., Asian needs A-grade + 3 confluences, London accepts B-grade + 2.</p>
+        <p style="margin-top:4px">If below the bar → shadow (tracked, not notified)</p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--feedback)">FEEDBACK</span><br>killzone_profiler.py<br><br>Zero API cost</div>
+    </div>
+
+    <!-- Step 14: Store + Notify -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--red);background:var(--red)"></div><div class="vflow-connector" style="background:var(--red)"></div></div>
+      <div class="vflow-card" style="border-color:var(--red);">
+        <h4 style="color:var(--red)">14. Store Setup + Notify YOU</h4>
+        <p><span class="code">scanner_db.store_setup()</span> persists everything: analysis JSON, calibration JSON, DNA stats, entry zone, API cost.</p>
+        <p style="margin-top:4px"><strong>Notifications sent:</strong><br>
+          • 🔍 SETUP DETECTED (early warning, before monitoring)<br>
+          • NEW [Direction] Setup [TF] (full trade signal with levels)
+        </p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--red)">YOU</span><br>scanner_db.py<br>notifications.py<br><br>Telegram + macOS</div>
+    </div>
+
+    <!-- Step 15: Monitor + Resolve -->
+    <div class="vflow-step">
+      <div class="vflow-line"><div class="vflow-dot" style="border-color:var(--data);background:var(--data)"></div><div class="vflow-connector" style="background:rgba(0,0,0,0)"></div></div>
+      <div class="vflow-card">
+        <h4 style="color:var(--data)">15. Monitor → Resolve → Feed Back</h4>
+        <p><span class="code">monitor_pending()</span> polls 5-min candles. When SL/TP hit:</p>
+        <p style="margin-top:4px">
+          <span class="code">_log_trade_complete()</span> triggers the entire feedback cascade:<br>
+          • <strong>Features extracted</strong> from execution-TF candles (52 columns)<br>
+          • <strong>Accuracy tracker</strong> updated (Claude's track record)<br>
+          • <strong>Bayesian beliefs</strong> updated (win rate + drawdown Beta distribution)<br>
+          • <strong>Training dataset</strong> ingested (for AutoGluon retrain)<br>
+          • <strong>Setup DNA profile</strong> stored (for future pattern matching)<br>
+          • <strong>Layer performance</strong> tracked (which calibration layer adds value)<br>
+          • <strong>Cost-per-winner</strong> computed (API spend vs outcome)<br>
+          • <strong>Opus tracker</strong> updated (was Opus's verdict correct?)<br>
+          • <strong>Narrative tracker</strong> updated (was the narrative bias correct?)<br>
+          • <strong>Narrative bandit</strong> arm updated (which prompt variant performed?)<br>
+          • <strong>Gold example store</strong> updated (best narratives for few-shot prompting)<br>
+          • <strong>Hash invalidated</strong> → forces re-scan on next cycle<br>
+          • <strong>Auto-retrain check</strong> → retrains AutoGluon if threshold reached
+        </p>
+      </div>
+      <div class="vflow-right"><span class="who" style="color:var(--feedback)">ALL FEEDBACK</span><br>claude_bridge.py<br>bayesian.py<br>dataset.py<br>setup_profiles.py<br>layer_performance.py<br>cost_per_winner.py<br>narrative_bandit.py<br>narrative_examples.py<br>training.py</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ TAB 1: WHO DECIDES WHAT ═══════════════════════════════════════ -->
+<div class="tab-content" id="tab1">
+  <div class="info-panel">
+    <h3>Decision Authority Map</h3>
+    <p>Every decision in the system has exactly one authority. Here's who owns what.</p>
+  </div>
+
+  <table class="dtable">
+    <thead>
+      <tr><th>Decision</th><th>Who Decides</th><th>Can Be Overridden By</th><th>Module</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>"Is there a potential setup?"</strong></td>
+        <td><span class="who-tag who-haiku">Haiku</span></td>
+        <td><span class="who-tag who-feedback">FN Tracker</span> bypasses/overrides when Haiku wrong too often</td>
+        <td>scanner.py → prompts.py</td>
+      </tr>
+      <tr>
+        <td><strong>"What's the macro narrative?"</strong><br>Directional bias, P3 phase, key levels</td>
+        <td><span class="who-tag who-opus">Opus</span></td>
+        <td>Nobody — but Sonnet can disagree, and narrative tracker scores accuracy</td>
+        <td>scanner.py → prompts.py</td>
+      </tr>
+      <tr>
+        <td><strong>"What's the thesis for this timeframe?"</strong><br>Persistent state across scans</td>
+        <td><span class="who-tag who-sonnet">Sonnet</span> writes it<br><span class="who-tag who-narrative">Narrative Engine</span> stores it</td>
+        <td>Structural contradiction check can force re-evaluation. Confidence decay if thesis doesn't pan out.</td>
+        <td>narrative_state.py</td>
+      </tr>
+      <tr>
+        <td><strong>"Is this a trade? Entry/SL/TP?"</strong><br>The actual trade decision</td>
+        <td><span class="who-tag who-sonnet">Sonnet</span></td>
+        <td><span class="who-tag who-ml">ML Calibrator</span> adjusts SL/TP levels (usually widens SL)</td>
+        <td>scanner.py → prompts.py</td>
+      </tr>
+      <tr>
+        <td><strong>"What grade is this setup?"</strong><br>A/B/C/D quality</td>
+        <td><span class="who-tag who-sonnet">Sonnet</span> sets initial</td>
+        <td><span class="who-tag who-feedback">Setup DNA</span> can upgrade/downgrade based on historical WR<br>
+            <span class="who-tag who-opus">Opus</span> can downgrade or reject<br>
+            <span class="who-tag who-feedback">KZ Profiler</span> can shadow</td>
+        <td>scanner.py</td>
+      </tr>
+      <tr>
+        <td><strong>"Should we actually trade this?"</strong><br>Final go/no-go</td>
+        <td><span class="who-tag who-opus">Opus</span> (for A/B)</td>
+        <td><span class="who-tag who-feedback">Opus FN policy</span> overrides rejections if Opus has been wrong too often</td>
+        <td>scanner.py → claude_bridge.py</td>
+      </tr>
+      <tr>
+        <td><strong>"Where should the SL actually be?"</strong></td>
+        <td><span class="who-tag who-ml">ML Calibrator</span></td>
+        <td>Nobody — consensus takes widest SL across 6 layers</td>
+        <td>calibrate.py → consensus.py</td>
+      </tr>
+      <tr>
+        <td><strong>"What volatility regime are we in?"</strong></td>
+        <td><span class="who-tag who-ml">Volatility Classifier</span></td>
+        <td>Nobody — pure computation from candle data</td>
+        <td>volatility.py</td>
+      </tr>
+      <tr>
+        <td><strong>"Should AutoGluon retrain?"</strong></td>
+        <td><span class="who-tag who-code">Code Logic</span></td>
+        <td>Auto-triggers every 6h or every N resolved trades</td>
+        <td>training.py → scanner.py</td>
+      </tr>
+      <tr>
+        <td><strong>"Is this killzone worth scanning?"</strong></td>
+        <td><span class="who-tag who-feedback">KZ Profiler</span> + <span class="who-tag who-feedback">CPW Tracker</span></td>
+        <td>Can reduce scan frequency for low-ROI segments</td>
+        <td>killzone_profiler.py<br>cost_per_winner.py</td>
+      </tr>
+      <tr>
+        <td><strong>"Was the intermarket signal useful?"</strong></td>
+        <td><span class="who-tag who-feedback">Intermarket Validator</span></td>
+        <td>Can disable intermarket fetch for "noise" segments</td>
+        <td>intermarket_validator.py</td>
+      </tr>
+      <tr>
+        <td><strong>"Which prompt variant to use?"</strong></td>
+        <td><span class="who-tag who-feedback">Narrative Bandit</span></td>
+        <td>Thompson sampling — automatically explores/exploits</td>
+        <td>narrative_bandit.py</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ═══════════════════════════════════════ TAB 2: NARRATIVE ENGINE ═══════════════════════════════════════ -->
+<div class="tab-content" id="tab2">
+  <div class="info-panel">
+    <h3>Narrative Engine — The System's Memory</h3>
+    <p>Without the narrative engine, every scan would be a <strong>cold reading</strong> — Claude sees candles with no context of what it thought 15 minutes ago. The narrative engine gives Claude continuity: "Last scan you said we're in accumulation with a bullish bias. Price has since dropped through your invalidation level. Re-evaluate."</p>
+  </div>
+
+  <div class="two-col">
+    <div class="info-panel">
+      <h3 style="color:var(--narrative)">What It Stores (per timeframe)</h3>
+      <p>
+        <strong>thesis</strong> — free text narrative (e.g., "Accumulation phase forming with liquidity sweep below 2340")<br><br>
+        <strong>directional_bias</strong> — bullish / bearish / neutral<br><br>
+        <strong>bias_confidence</strong> — 0.0 to 1.0<br><br>
+        <strong>p3_phase</strong> — accumulation / manipulation / distribution<br><br>
+        <strong>p3_progress</strong> — early / mid / late<br><br>
+        <strong>key_levels</strong> — JSON array of price levels to watch<br><br>
+        <strong>expected_next_move</strong> — what Claude thinks happens next<br><br>
+        <strong>invalidation</strong> — price level that kills the thesis<br><br>
+        <strong>watching_for</strong> — specific triggers to confirm thesis<br><br>
+        <strong>scan_count</strong> — how many scans this thesis has survived<br><br>
+        <strong>is_revision</strong> — did bias change from previous?
+      </p>
+    </div>
+    <div class="info-panel">
+      <h3 style="color:var(--narrative)">Anti-Anchoring Safeguards</h3>
+      <p>
+        <strong>1. Stale thesis expiry</strong><br>
+        15min: 2 hours, 1H: 8 hours, 4H: 24 hours, 1D: 72 hours. Old theses auto-expire so Claude doesn't anchor on ancient analysis.<br><br>
+
+        <strong>2. Invalidation check</strong><br>
+        <span style="color:var(--cyan)">check_invalidation()</span> runs BEFORE the prompt is built. If price blew through the invalidation level, Sonnet is told explicitly.<br><br>
+
+        <strong>3. Structural contradiction</strong><br>
+        compute_market_structure() compares Claude's thesis direction against actual structure score. If they conflict, a warning is injected.<br><br>
+
+        <strong>4. Confidence decay</strong><br>
+        If expected_next_move doesn't happen, confidence decays by 15% per scan. Prevents stale-but-confident theses from persisting.<br><br>
+
+        <strong>5. Revision detection</strong><br>
+        When bias flips, it's flagged as is_revision=True. If a pending setup exists on this TF, Stage 6 THESIS_REVISED notification fires.
+      </p>
+    </div>
+  </div>
+
+  <div class="info-panel">
+    <h3 style="color:var(--narrative)">Data Flow: How the Narrative Feeds Into Everything</h3>
+    <p>
+      <strong>→ Into Sonnet's prompt</strong> (step 7): Previous thesis + invalidation status + structural contradiction warning. This is how Sonnet "remembers" its last analysis.<br><br>
+      <strong>→ Into feature extraction</strong>: thesis_confidence, p3_progress_encoded, thesis_scan_count, opus_sonnet_agreement become 4 of the 52 ML features. AutoGluon can learn that "thesis survived 3+ scans" correlates with winning trades.<br><br>
+      <strong>→ Into lifecycle notifications</strong>: Stages 1/2/6 use narrative state to notify you when a thesis is forming, confirmed, or revised.<br><br>
+      <strong>→ Into the prospect path</strong>: Opus uses the active thesis to decide where to pre-position zone alerts before killzones.
+    </p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ TAB 3: ML CALIBRATION ═══════════════════════════════════════ -->
+<div class="tab-content" id="tab3">
+  <div class="info-panel">
+    <h3>ML Calibration — How the Numbers Get Adjusted</h3>
+    <p>Sonnet makes the trade decision (direction, entry, SL, TP). The ML stack doesn't decide <em>whether</em> to trade — it adjusts <em>where</em> the SL and TPs should be, based on statistical evidence. The final SL is always the <strong>widest</strong> across all layers (protects you), and TPs are the <strong>median</strong>.</p>
+  </div>
+
+  <table class="dtable">
+    <thead>
+      <tr><th>Layer</th><th>What It Does</th><th>Inputs</th><th>When Active</th><th>Module</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>1. Volatility Calibrator</strong></td>
+        <td>Scales SL/TP based on current ATR, trading session, and 5-state volatility regime (low/normal/elevated/high/extreme)</td>
+        <td>Candles → ATR, session (Asian/London/NY), regime classification</td>
+        <td>Always (from first trade)</td>
+        <td>volatility.py</td>
+      </tr>
+      <tr>
+        <td><strong>2. V1 Session Stats</strong></td>
+        <td>Baseline drawdown distributions from 1151 V1 simulated trades. "At this session, 80th percentile drawdown is X ATR."</td>
+        <td>Pre-computed session statistics (seeded once)</td>
+        <td>Always (if seeded)</td>
+        <td>calibrate.py + seed.py</td>
+      </tr>
+      <tr>
+        <td><strong>3. Bayesian Beliefs</strong></td>
+        <td>Sequential learning: Beta(alpha, beta) distribution for win rate. Updated after every live + scanner trade. Prior: alpha=8.92, beta=11.08 (44.6% WR from V1)</td>
+        <td>Prior state + each trade outcome</td>
+        <td>Always</td>
+        <td>bayesian.py</td>
+      </tr>
+      <tr>
+        <td><strong>4. AutoGluon Quantile</strong></td>
+        <td>ML model predicts optimal SL/TP bands from 52 features. Binary classifier (win/loss) or Multi-3 (stopped/tp1/runner) depending on data quality.</td>
+        <td>52-column feature vector from features.py</td>
+        <td>After 30+ trades (classifier) or 100+ rich-feature trades (multi-3)</td>
+        <td>prediction.py + training.py</td>
+      </tr>
+      <tr>
+        <td><strong>5. Historical Matching</strong></td>
+        <td>Finds past setups with similar volatility profile. Uses their actual outcomes to suggest SL/TP.</td>
+        <td>Current ATR, session, regime → match against training dataset</td>
+        <td>When training dataset has enough data</td>
+        <td>calibrate.py</td>
+      </tr>
+      <tr>
+        <td><strong>6. Consensus</strong></td>
+        <td>Takes the <strong>widest SL</strong> and <strong>median TPs</strong> across all active layers. Computes composite confidence + final grade.</td>
+        <td>All layer outputs</td>
+        <td>Always</td>
+        <td>consensus.py</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="two-col" style="margin-top:20px;">
+    <div class="info-panel">
+      <h3 style="color:var(--ml)">How AutoGluon Gets Trained</h3>
+      <p>
+        <strong>1.</strong> Every resolved trade → <span style="color:var(--cyan)">dataset.ingest_live_trade()</span> adds a row with 52 features + outcome<br><br>
+        <strong>2.</strong> <span style="color:var(--cyan)">should_retrain()</span> checks every N trades or every 6 hours<br><br>
+        <strong>3.</strong> <span style="color:var(--cyan)">train_classifier()</span> loads blended dataset (V1 seed data + live trades, weighted by feature quality)<br><br>
+        <strong>4.</strong> Binary mode (win/loss) until 100+ rich-feature rows, then auto-upgrades to Multi-3 (stopped/tp1/runner) if OOS accuracy > 0.45<br><br>
+        <strong>5.</strong> Quantile regressor trained separately for SL/TP band predictions<br><br>
+        <strong>6.</strong> Model saved to disk, prediction.py auto-detects which type is active
+      </p>
+    </div>
+    <div class="info-panel">
+      <h3 style="color:var(--ml)">Where Backtest Engine Fits</h3>
+      <p>
+        <strong>BacktestGenerator</strong> + <strong>WalkForwardEngine</strong> exist to generate training data and validate the ML models. They are NOT in the live scan path.<br><br>
+        <strong>Flow:</strong><br>
+        1. BacktestGenerator fetches historical candles from OANDA<br>
+        2. Runs structural scan to find potential setup zones<br>
+        3. Calls Haiku/Sonnet to evaluate each zone<br>
+        4. Labels outcomes from forward price action<br>
+        5. WFO runs walk-forward cross-validation<br>
+        6. Results feed into <span style="color:var(--cyan)">dataset.ingest_wfo_trades()</span><br><br>
+        <strong>Purpose:</strong> Generate enough training data before live data accumulates. V1 seed data (1151 trades) bootstraps the system.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ TAB 4: FEEDBACK LOOPS ═══════════════════════════════════════ -->
+<div class="tab-content" id="tab4">
+  <div class="info-panel">
+    <h3>Feedback Loops — How the System Learns</h3>
+    <p>Every resolved trade triggers <strong>12 feedback mechanisms</strong>. These aren't theoretical — they're all wired and running in <span style="color:var(--cyan)">_log_trade_complete()</span>.</p>
+  </div>
+
+  <table class="dtable">
+    <thead>
+      <tr><th>Feedback Loop</th><th>What It Learns</th><th>How It Affects Future Scans</th><th>Module</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Bayesian Beliefs</strong></td>
+        <td>Win rate + drawdown distribution</td>
+        <td>Adjusts AutoGluon confidence, affects consensus grade</td>
+        <td>bayesian.py</td>
+      </tr>
+      <tr>
+        <td><strong>Training Dataset</strong></td>
+        <td>52-feature vector + outcome per trade</td>
+        <td>Retrains AutoGluon classifier/quantile → better SL/TP predictions</td>
+        <td>dataset.py → training.py</td>
+      </tr>
+      <tr>
+        <td><strong>Setup DNA Profiles</strong></td>
+        <td>Win rate by setup pattern (direction × KZ × TF × ICT elements)</td>
+        <td>Upgrades/downgrades future setups with matching DNA (step 11)</td>
+        <td>setup_dna.py + setup_profiles.py</td>
+      </tr>
+      <tr>
+        <td><strong>Layer Performance</strong></td>
+        <td>Which calibration layer was closest to actual outcome</td>
+        <td>Future: dial down layers that don't add value (P3 roadmap)</td>
+        <td>layer_performance.py</td>
+      </tr>
+      <tr>
+        <td><strong>Cost-Per-Winner</strong></td>
+        <td>API spend vs outcome by timeframe × killzone</td>
+        <td>Reduces scan frequency for low-ROI segments</td>
+        <td>cost_per_winner.py</td>
+      </tr>
+      <tr>
+        <td><strong>Opus Tracker</strong></td>
+        <td>Were Opus rejections correct? (validated + won = good, rejected + won = false negative)</td>
+        <td>If Opus FN rate high → rejections auto-overridden to downgrades</td>
+        <td>claude_bridge.py</td>
+      </tr>
+      <tr>
+        <td><strong>Narrative Tracker</strong></td>
+        <td>Opus directional bias accuracy by killzone and P3 phase</td>
+        <td>Per-segment narrative trust scores shown in Sonnet's prompt</td>
+        <td>claude_bridge.py</td>
+      </tr>
+      <tr>
+        <td><strong>Narrative Bandit</strong></td>
+        <td>Which prompt variant leads to better trade outcomes</td>
+        <td>Thompson sampling selects best-performing prompt arms, retires losers</td>
+        <td>narrative_bandit.py</td>
+      </tr>
+      <tr>
+        <td><strong>Gold Examples</strong></td>
+        <td>Best narrative analyses that led to winning trades</td>
+        <td>Injected as few-shot examples in future Opus narrative prompts</td>
+        <td>narrative_examples.py</td>
+      </tr>
+      <tr>
+        <td><strong>Narrative Field Weights</strong></td>
+        <td>EMA-weighted importance of each narrative field (bias, P3, levels, etc.)</td>
+        <td>Adjusts prompt emphasis — more weight on fields that correlate with wins</td>
+        <td>claude_bridge.py</td>
+      </tr>
+      <tr>
+        <td><strong>Haiku FN Tracker</strong></td>
+        <td>When Haiku says "no setup" but price moves ≥2 ATR</td>
+        <td>Bypasses or loosens Haiku for high-FN segments</td>
+        <td>haiku_fn_tracker.py</td>
+      </tr>
+      <tr>
+        <td><strong>Entry Placement</strong></td>
+        <td>MFE/MAE by entry position within OB/FVG zone</td>
+        <td>Placement guidance in Sonnet's prompt: "OB midpoint entries outperform edge"</td>
+        <td>entry_placement.py</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="info-panel" style="margin-top:20px;">
+    <h3 style="color:var(--feedback)">The Flywheel Effect</h3>
+    <p>
+      <strong>More trades resolve</strong> → more data for every feedback loop → AutoGluon gets sharper, Bayesian beliefs tighten, DNA patterns accumulate, Haiku false negatives are learned, Opus accuracy is tracked, narrative field weights adjust, prompt variants are tested...<br><br>
+      Every feedback loop is independent and degrades gracefully — if any one fails, the others keep working. But together, they create a system that gets measurably better with every trade.
+    </p>
+  </div>
+</div>
+
+<script>
+function showTab(idx) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===idx));
+  document.querySelectorAll('.tab-content').forEach((c,i) => c.classList.toggle('active', i===idx));
+}
+</script>
+</body>
+</html>
