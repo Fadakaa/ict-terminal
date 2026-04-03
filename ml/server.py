@@ -1596,3 +1596,42 @@ def snapshot_prompt_context(days: int = 14):
     recorder = SystemSnapshotRecorder()
     ctx = recorder.build_prompt_context(days=days)
     return {"context": ctx, "note": "This block is injected into both Opus and Sonnet prompts."}
+
+
+# ─── Admin: one-time data migration endpoints ───────────────────────────────
+
+@app.post("/admin/restore/db")
+async def admin_restore_db(request: Request):
+    """Upload local scanner.db to the Railway Volume. Protected by ADMIN_SECRET."""
+    secret = os.environ.get("ADMIN_SECRET", "")
+    if not secret or request.headers.get("X-Admin-Secret") != secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty body")
+    import tempfile, shutil
+    db_path = get_config()["db_path"]
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
+        f.write(body)
+        tmp = f.name
+    shutil.move(tmp, db_path)
+    return {"status": "ok", "db_path": db_path, "size_bytes": len(body)}
+
+
+@app.post("/admin/restore/file/{filename}")
+async def admin_restore_file(filename: str, request: Request):
+    """Upload a JSON/CSV file to the models directory. Protected by ADMIN_SECRET."""
+    secret = os.environ.get("ADMIN_SECRET", "")
+    if not secret or request.headers.get("X-Admin-Secret") != secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    import re
+    if not re.match(r'^[\w\-]+\.(json|csv|parquet)$', filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    body = await request.body()
+    model_dir = get_config()["model_dir"]
+    os.makedirs(model_dir, exist_ok=True)
+    dest = os.path.join(model_dir, filename)
+    with open(dest, "wb") as f:
+        f.write(body)
+    return {"status": "ok", "path": dest, "size_bytes": len(body)}
