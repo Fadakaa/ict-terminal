@@ -409,6 +409,7 @@ export default function App() {
     fetch("/api/bayesian").then((r) => r.ok ? r.json() : null).then((data) => {
       if (data?.bayesian) setBayesian(data.bayesian);
       if (data?.sessionStats) setSessionStats(data.sessionStats);
+      if (data?.drift) setBayesianDrift(data.drift);
     }).catch(() => {
       // Fallback to ML seed stats if /api/bayesian unavailable
       fetch("/api/ml/seed/stats").then((r) => r.ok ? r.json() : null).then(setSessionStats).catch(() => {});
@@ -428,13 +429,14 @@ export default function App() {
         const bData = await bRes.json();
         if (bData.bayesian) { setBayesian(bData.bayesian); bayesianFromDb = true; }
         if (bData.sessionStats) { setSessionStats(bData.sessionStats); }
+        if (bData.drift) { setBayesianDrift(bData.drift); }
       }
     } catch {}
 
     const endpoints = [
       ["/api/ml/health", setPipelineHealth],
-      // Only fall back to ML beliefs/seed if /api/bayesian didn't provide data
-      ...(!bayesianFromDb ? [["/api/ml/beliefs", setBayesian], ["/api/ml/seed/stats", setSessionStats]] : []),
+      // Only fall back to ML beliefs/seed/drift if /api/bayesian didn't provide data
+      ...(!bayesianFromDb ? [["/api/ml/beliefs", setBayesian], ["/api/ml/seed/stats", setSessionStats], ["/api/ml/bayesian/drift", setBayesianDrift]] : []),
       ["/api/ml/claude/accuracy", setAccuracy],
       ["/api/ml/calibration/value", setCalibrationValue],
       ["/api/ml/dataset/stats", setDatasetStats],
@@ -449,7 +451,6 @@ export default function App() {
       ["/api/ml/backtest/meta", setBacktestMeta],
       ["/api/ml/backtest/status", setBacktestStatus],
       ["/api/ml/scanner/prospects", setProspects],
-      ["/api/ml/bayesian/drift", setBayesianDrift],
       ["/api/ml/killzone/gates", setKillzoneGates],
       [`/api/ml/narrative/thesis/current?timeframe=${timeframe}`, setCurrentThesis],
       [`/api/ml/narrative/thesis/history?timeframe=${timeframe}&limit=10`, setThesisHistory],
@@ -857,10 +858,11 @@ export default function App() {
   useEffect(() => {
     if (screen !== "live" || isDemo) return;
     const id = setInterval(() => {
-      // Fetch real Bayesian stats from scanner DB (replaces /api/ml/beliefs)
+      // Fetch real Bayesian stats from scanner DB (replaces /api/ml/beliefs + drift)
       fetch("/api/bayesian").then(r => r.ok ? r.json() : null).then(data => {
         if (data?.bayesian) setBayesian(data.bayesian);
         if (data?.sessionStats) setSessionStats(data.sessionStats);
+        if (data?.drift) setBayesianDrift(data.drift);
       }).catch(() => {});
 
       Promise.allSettled([

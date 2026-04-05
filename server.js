@@ -111,6 +111,12 @@ app.get("/api/bayesian", (req, res) => {
       };
     }
 
+    // Drift detection: compare real WR against V1 seed reference (44.6%)
+    const referenceWr = 0.446;
+    const driftPp = Math.round((winRateMean - referenceWr) * 1000) / 10; // percentage points, 1 decimal
+    const driftLevel = Math.abs(driftPp) >= 20 ? "critical" : Math.abs(driftPp) >= 10 ? "significant" : "none";
+    const driftRec = `Win rate ${driftPp >= 0 ? "above" : "below"} V1 seed at ${(winRateMean * 100).toFixed(1)}% (reference ${(referenceWr * 100).toFixed(1)}%, drift ${driftPp >= 0 ? "+" : ""}${driftPp}pp) — ${totalTrades} trades`;
+
     db.close();
 
     res.json({
@@ -141,6 +147,13 @@ app.get("/api/bayesian", (req, res) => {
         },
       },
       setup_type_stats: setupTypeStats,
+      drift: {
+        drift_pp: driftPp,
+        level: driftLevel,
+        recommendation: driftRec,
+        posterior_wr: winRateMean,
+        reference_wr: referenceWr,
+      },
     });
   } catch (e) {
     if (db) try { db.close(); } catch {}
