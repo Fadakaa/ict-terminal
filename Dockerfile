@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir \
 # ── Node build stage ────────────────────────────────────────────
 FROM node:20-slim AS node-build
 
+# better-sqlite3 needs build tools for native compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --production=false

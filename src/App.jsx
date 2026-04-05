@@ -405,7 +405,14 @@ export default function App() {
   useEffect(() => {
     if (screen !== "setup") return;
     fetch("/api/ml/health").then((r) => r.ok ? r.json() : null).then(setPipelineHealth).catch(() => setPipelineHealth(null));
-    fetch("/api/ml/seed/stats").then((r) => r.ok ? r.json() : null).then(setSessionStats).catch(() => {});
+    // Fetch real Bayesian stats from scanner DB (primary), fall back to ML seed stats
+    fetch("/api/bayesian").then((r) => r.ok ? r.json() : null).then((data) => {
+      if (data?.bayesian) setBayesian(data.bayesian);
+      if (data?.sessionStats) setSessionStats(data.sessionStats);
+    }).catch(() => {
+      // Fallback to ML seed stats if /api/bayesian unavailable
+      fetch("/api/ml/seed/stats").then((r) => r.ok ? r.json() : null).then(setSessionStats).catch(() => {});
+    });
   }, [screen]);
 
   // ═══════════════════════════════════════════════════════════
@@ -413,10 +420,21 @@ export default function App() {
   // ═══════════════════════════════════════════════════════════
 
   const refreshBackendState = useCallback(async () => {
+    // Fetch real Bayesian stats from scanner_setups DB (takes priority over ML beliefs)
+    let bayesianFromDb = false;
+    try {
+      const bRes = await fetch("/api/bayesian");
+      if (bRes.ok) {
+        const bData = await bRes.json();
+        if (bData.bayesian) { setBayesian(bData.bayesian); bayesianFromDb = true; }
+        if (bData.sessionStats) { setSessionStats(bData.sessionStats); }
+      }
+    } catch {}
+
     const endpoints = [
       ["/api/ml/health", setPipelineHealth],
-      ["/api/ml/beliefs", setBayesian],
-      ["/api/ml/seed/stats", setSessionStats],
+      // Only fall back to ML beliefs/seed if /api/bayesian didn't provide data
+      ...(!bayesianFromDb ? [["/api/ml/beliefs", setBayesian], ["/api/ml/seed/stats", setSessionStats]] : []),
       ["/api/ml/claude/accuracy", setAccuracy],
       ["/api/ml/calibration/value", setCalibrationValue],
       ["/api/ml/dataset/stats", setDatasetStats],
@@ -839,24 +857,28 @@ export default function App() {
   useEffect(() => {
     if (screen !== "live" || isDemo) return;
     const id = setInterval(() => {
+      // Fetch real Bayesian stats from scanner DB (replaces /api/ml/beliefs)
+      fetch("/api/bayesian").then(r => r.ok ? r.json() : null).then(data => {
+        if (data?.bayesian) setBayesian(data.bayesian);
+        if (data?.sessionStats) setSessionStats(data.sessionStats);
+      }).catch(() => {});
+
       Promise.allSettled([
         fetch("/api/ml/scanner/pending").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/scanner/history").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/scanner/status").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/scanner/pnl").then(r => r.ok ? r.json() : null),
-        fetch("/api/ml/beliefs").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/claude/accuracy").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/calibration/value").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/model/info").then(r => r.ok ? r.json() : null),
         fetch(`/api/ml/narrative/thesis/current?timeframe=${timeframe}`).then(r => r.ok ? r.json() : null),
         fetch("/api/ml/lifecycle/recent?limit=30").then(r => r.ok ? r.json() : null),
         fetch(`/api/ml/context/recent?timeframe=${timeframe}`).then(r => r.ok ? r.json() : null),
-      ]).then(([p, h, s, pnl, bay, acc, calVal, mi, thesis, lc, rctx]) => {
+      ]).then(([p, h, s, pnl, acc, calVal, mi, thesis, lc, rctx]) => {
         if (p.status === "fulfilled" && p.value) setScannerSetups(p.value);
         if (h.status === "fulfilled" && h.value) setScannerHistory(h.value);
         if (s.status === "fulfilled" && s.value) setScannerStatus(s.value);
         if (pnl.status === "fulfilled" && pnl.value) setPnlHistory(pnl.value);
-        if (bay.status === "fulfilled" && bay.value) setBayesian(bay.value);
         if (acc.status === "fulfilled" && acc.value) setAccuracy(acc.value);
         if (calVal.status === "fulfilled" && calVal.value) setCalibrationValue(calVal.value);
         if (mi.status === "fulfilled" && mi.value) setModelInfo(mi.value);
@@ -3209,9 +3231,8 @@ export default function App() {
               <div style={{ marginTop: 18, padding: 12, background: "#06060c", border: "1px solid #14142a", fontSize: 8.5, lineHeight: 2.2, color: "#33334d" }}>
                 <div style={{ color: "#f5c842", fontSize: 8, letterSpacing: 2, marginBottom: 4 }}>SYSTEM STATUS</div>
                 <div style={{ color: backendOk ? "#26a69a" : "#ef5350" }}>{backendOk ? "✓" : "✗"} Backend: {backendOk ? "Connected" : "Not reachable"}</div>
-                <div style={{ color: seeded ? "#26a69a" : "#33334d" }}>{seeded ? "✓" : "○"} V1 Data: {seeded ? `${Object.values(sessionStats?.session_stats || {}).reduce((s, v) => s + v.trades, 0)} trades seeded` : "Not seeded"}</div>
-                <div style={{ color: seeded ? "#26a69a" : "#33334d" }}>{seeded ? "✓" : "○"} Bayesian: {seeded ? "Priors set" : "Awaiting seed"}</div>
-                <div style={{ color: "#33334d" }}>○ Live Trades: {sessionStats?.dataset_stats?.live_count || 0} logged</div>
+                <div style={{ color: bayesian ? "#26a69a" : "#33334d" }}>{bayesian ? "✓" : "○"} Bayesian: {bayesian ? `${bayesian.total_trades} trades · ${(bayesian.win_rate_mean * 100).toFixed(1)}% WR` : "No data"}</div>
+                <div style={{ color: sessionStats?.dataset_stats ? "#26a69a" : "#33334d" }}>{sessionStats?.dataset_stats ? "✓" : "○"} Dataset: {sessionStats?.dataset_stats?.total || 0} total · {sessionStats?.dataset_stats?.resolved || 0} resolved</div>
                 {!backendOk && <div style={{ color: "#2a2a44", marginTop: 4 }}>Start: cd ml && python -m uvicorn server:app --port 8000</div>}
               </div>
             </div>
@@ -3446,8 +3467,7 @@ export default function App() {
           ))}
         </div>
         <div style={{ fontSize: 7, color: "#33334d" }}>
-          V1: {sessionStats?.session_stats ? Object.values(sessionStats.session_stats).reduce((s, v) => s + v.trades, 0) : 0} seeded
-          · Bayesian: {bayesian?.total_trades || 0} trades
+          Bayesian: {bayesian?.total_trades || 0} trades · {bayesian ? `${(bayesian.win_rate_mean * 100).toFixed(1)}% WR` : "—"}
           · AutoGluon: {datasetStats?.total >= 30 ? "TRAINED" : "LEARNING"}
           {lastUpdate && ` · Last: ${lastUpdate.toLocaleTimeString()}`}
         </div>

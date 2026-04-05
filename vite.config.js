@@ -11,6 +11,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      "/api/bayesian": {
+        target: "http://localhost:3001",
+        changeOrigin: true,
+      },
       "/api/ml": {
         target: "http://localhost:8000",
         changeOrigin: true,
