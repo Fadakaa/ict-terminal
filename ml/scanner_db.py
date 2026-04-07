@@ -135,6 +135,16 @@ class ScannerDB:
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_zone_cooldown_lookup
                 ON zone_cooldowns(zone_key, killzone, date)
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_drawdown (
+                    id              INTEGER PRIMARY KEY CHECK (id = 1),
+                    trading_day     TEXT NOT NULL DEFAULT '',
+                    realised_pnl    REAL NOT NULL DEFAULT 0.0,
+                    trade_count     INTEGER NOT NULL DEFAULT 0,
+                    updated_at      TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("INSERT OR IGNORE INTO daily_drawdown (id) VALUES (1)")
 
     def _conn(self):
         return sqlite3.connect(self.db_path)

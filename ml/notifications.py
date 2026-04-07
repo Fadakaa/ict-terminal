@@ -42,12 +42,31 @@ RISK_PCT = float(os.getenv("RISK_PCT", "0.5"))
 DAILY_DD_LIMIT = float(os.getenv("DAILY_DD_LIMIT", "0.04"))  # 4% daily drawdown limit
 XAUUSD_PIP_VALUE = 100  # $100 per $1 move per standard lot
 
-# Daily drawdown tracker — reset each calendar day (UTC)
-_daily_dd_state = {"date": "", "realised_pnl": 0.0}
+# Daily drawdown tracker — DB-persisted, resets at 8pm GMT (trading day boundary)
+DD_RESET_HOUR_GMT = 20  # 8pm GMT — new trading day starts here
+
+
+def _get_trading_day() -> str:
+    """Return the current trading day label based on 8pm GMT reset.
+
+    Before 8pm GMT → today's date (e.g. "2026-04-07")
+    After 8pm GMT  → tomorrow's date (the new trading day has started)
+    """
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    if now.hour >= DD_RESET_HOUR_GMT:
+        return (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    return now.strftime("%Y-%m-%d")
+
+
+def _get_dd_db_path() -> str:
+    """Resolve the scanner DB path for drawdown persistence."""
+    from ml.config import get_config
+    return get_config().get("db_path")
 
 
 def _daily_dd_remaining() -> dict:
-    """Return daily drawdown budget status.
+    """Return daily drawdown budget status (DB-persisted).
 
     Returns dict with:
         limit_dollars: absolute daily DD limit in dollars
@@ -58,14 +77,30 @@ def _daily_dd_remaining() -> dict:
         warning: True if ≥50% of daily DD consumed
         critical: True if ≥75% of daily DD consumed
     """
-    from datetime import datetime, timezone
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if _daily_dd_state["date"] != today:
-        _daily_dd_state["date"] = today
-        _daily_dd_state["realised_pnl"] = 0.0
+    import sqlite3
+    trading_day = _get_trading_day()
+    realised_pnl = 0.0
+
+    try:
+        db_path = _get_dd_db_path()
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT trading_day, realised_pnl FROM daily_drawdown WHERE id = 1"
+            ).fetchone()
+            if row and row[0] == trading_day:
+                realised_pnl = row[1]
+            elif row and row[0] != trading_day:
+                # Trading day has rolled over — reset
+                conn.execute(
+                    "UPDATE daily_drawdown SET trading_day = ?, realised_pnl = 0.0, "
+                    "trade_count = 0, updated_at = datetime('now') WHERE id = 1",
+                    (trading_day,))
+                realised_pnl = 0.0
+    except Exception as e:
+        logger.warning("DD read from DB failed, using 0: %s", e)
 
     limit = ACCOUNT_BALANCE * DAILY_DD_LIMIT
-    used = min(0, _daily_dd_state["realised_pnl"])  # Only losses count
+    used = min(0, realised_pnl)  # Only losses count
     remaining = limit + used  # used is negative, so this subtracts
     return {
         "limit_dollars": limit,
@@ -79,13 +114,37 @@ def _daily_dd_remaining() -> dict:
 
 
 def record_daily_pnl(dollar_pnl: float):
-    """Record a trade's P&L against the daily drawdown tracker."""
-    from datetime import datetime, timezone
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if _daily_dd_state["date"] != today:
-        _daily_dd_state["date"] = today
-        _daily_dd_state["realised_pnl"] = 0.0
-    _daily_dd_state["realised_pnl"] += dollar_pnl
+    """Record a trade's P&L against the daily drawdown tracker (DB-persisted).
+
+    Persists to the daily_drawdown table so DD survives server restarts.
+    Resets automatically at 8pm GMT (new trading day boundary).
+    """
+    import sqlite3
+    trading_day = _get_trading_day()
+
+    try:
+        db_path = _get_dd_db_path()
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT trading_day, realised_pnl FROM daily_drawdown WHERE id = 1"
+            ).fetchone()
+
+            if row and row[0] == trading_day:
+                # Same trading day — accumulate
+                conn.execute(
+                    "UPDATE daily_drawdown SET realised_pnl = realised_pnl + ?, "
+                    "trade_count = trade_count + 1, updated_at = datetime('now') WHERE id = 1",
+                    (dollar_pnl,))
+            else:
+                # New trading day — reset and record
+                conn.execute(
+                    "UPDATE daily_drawdown SET trading_day = ?, realised_pnl = ?, "
+                    "trade_count = 1, updated_at = datetime('now') WHERE id = 1",
+                    (trading_day, dollar_pnl))
+
+            logger.info("DD recorded: $%.0f (trading day %s)", dollar_pnl, trading_day)
+    except Exception as e:
+        logger.error("DD write to DB failed: %s", e)
 
 
 def _calc_lot_size(entry: float, sl: float, balance: float = None,
@@ -443,51 +502,19 @@ def notify_budget_warning(spent: float, limit: float):
 
 
 def notify_trade_resolved(setup: dict, result: dict):
-    """Send notification for a resolved trade."""
-    outcome = result["outcome"]
-    is_win = outcome.startswith("tp")
-    is_expired = outcome == "expired"
+    """DEPRECATED — kept for backward compatibility.
 
-    if is_win:
-        emoji = "✅"
-        symbol = "WIN"
-    elif is_expired:
-        emoji = "⏰"
-        symbol = "EXPIRED"
-    else:
-        emoji = "❌"
-        symbol = "LOSS"
+    Trade resolution notifications are now handled exclusively by
+    notify_lifecycle(5, ...) / _build_stage_5() which owns:
+      - Telegram notification
+      - record_daily_pnl()
+      - DD budget display
+      - Post-resolution thesis
 
-    title = f"{emoji} {symbol} {outcome.upper()} [{setup.get('timeframe', '?')}] {setup.get('direction', '?').upper()}"
-
-    effective_sl = setup.get("calibrated_sl") or setup.get("sl_price", 0)
-    lot = _calc_lot_size(setup.get("entry_price", 0), effective_sl)
-    dollar_pnl = result.get("rr", 0) * lot["risk_dollars"] if lot["risk_dollars"] else 0
-
-    # Track daily DD
-    if dollar_pnl:
-        record_daily_pnl(dollar_pnl)
-    dd = _daily_dd_remaining()
-    dd_icon = "🛑" if dd["critical"] else "⚠️" if dd["warning"] else "🟢"
-
-    body_lines = [
-        f"Entry: ${setup.get('entry_price', 0):.2f} -> Exit: ${result.get('price', 0):.2f}",
-        f"Gross RR: {result.get('gross_rr', 0):.2f}R | Cost: {result.get('cost_rr', 0):.3f}R | Net: {result.get('rr', 0):.2f}R",
-        f"Lot Size: {lot['lot_size']} lots | P&L: ${dollar_pnl:+,.0f}",
-        f"{dd_icon} Daily DD: ${abs(dd['used_dollars']):,.0f} / ${dd['limit_dollars']:,.0f} ({dd['remaining_pct']:.1f}% left)",
-        f"Quality: {setup.get('setup_quality', '?')} | Bias: {setup.get('bias', '?')}",
-        f"ID: {setup.get('id', '?')}",
-    ]
-    if dd["critical"]:
-        body_lines.append("🛑 >75% daily drawdown consumed — consider stopping")
-    body = "\n".join(body_lines)
-
-    cfg = get_config()
-    if cfg.get("notify_macos", True):
-        sound = cfg.get("macos_sound_resolved", "Glass")
-        _send_macos(title, body, sound=sound)
-    if cfg.get("notify_telegram", True):
-        _send_telegram_html(f"<b>{_esc(title)}</b>\n<pre>{_esc(body)}</pre>")
+    This function no longer calls record_daily_pnl() to avoid
+    double-counting when both paths fire.
+    """
+    logger.debug("notify_trade_resolved called (deprecated) for setup %s", setup.get("id"))
 
 
 # ═══════════════════════════════════════════════════════════════════════

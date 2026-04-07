@@ -89,7 +89,7 @@ class TestHashInvalidation:
         }
 
         # Mock all the downstream updates to avoid import errors
-        with patch("ml.scanner.notify_trade_resolved"), \
+        with patch("ml.scanner.notify_lifecycle", create=True), \
              patch("ml.scanner.ScannerEngine._maybe_auto_retrain"):
             try:
                 mock_engine._log_trade_complete(setup, result)
@@ -116,7 +116,7 @@ class TestHashInvalidation:
         result = {"outcome": "tp1", "price": 2348.0, "rr": 2.0,
                   "gross_rr": 2.0, "cost_rr": 0.05, "mfe_atr": 2.5, "mae_atr": 0.3}
 
-        with patch("ml.scanner.notify_trade_resolved"), \
+        with patch("ml.scanner.notify_lifecycle", create=True), \
              patch("ml.scanner.ScannerEngine._maybe_auto_retrain"):
             try:
                 mock_engine._log_trade_complete(setup, result)
@@ -138,7 +138,7 @@ class TestHashInvalidation:
         result = {"outcome": "stopped_out", "price": 2336.0, "rr": -1.0,
                   "gross_rr": -1.0, "cost_rr": 0.05, "mfe_atr": 0.5, "mae_atr": 1.0}
 
-        with patch("ml.scanner.notify_trade_resolved"), \
+        with patch("ml.scanner.notify_lifecycle", create=True), \
              patch("ml.scanner.ScannerEngine._maybe_auto_retrain"):
             try:
                 mock_engine._log_trade_complete(setup, result)

@@ -21,7 +21,7 @@ import httpx
 
 from ml.config import get_config
 from ml.notifications import (
-    notify_new_setup, notify_trade_resolved,
+    notify_new_setup,
     notify_setup_detected, notify_entry_missed,
 )
 from ml.prompts import get_current_killzone
@@ -3180,6 +3180,14 @@ class ScannerEngine:
         except Exception as e:
             logger.debug("Prospect thesis_id lookup failed: %s", e)
 
+        # Fallback: generate a synthetic thesis_id so Stage 4/5 lifecycle
+        # notifications always fire, even when NarrativeStore has no current state
+        if not _prospect_thesis_id:
+            import hashlib
+            _fallback_src = f"prospect-{prospect_id or 'unknown'}-{direction}-{entry_price}"
+            _prospect_thesis_id = "p-" + hashlib.md5(_fallback_src.encode()).hexdigest()[:6]
+            logger.info("Prospect thesis_id fallback generated: %s", _prospect_thesis_id)
+
         # ── Step 2: Persist setup BEFORE sending alert ────────────────────
         # Ensures monitor_pending() can track SL/TP resolution and feed Bayesian.
         setup_id = None
@@ -3993,19 +4001,25 @@ class ScannerEngine:
                   f"{result['outcome']} → Accuracy+Dataset updated (Bayes skipped — scanner)")
             logger.info("Trade logged: %s [%s] %s — models updated",
                         setup["id"], setup.get("timeframe", "?"), result["outcome"])
-            notify_trade_resolved(setup, result)
 
-            # ── Stage 5: RESOLVED lifecycle ──
+            # ── Stage 5: RESOLVED lifecycle (single notification path) ──
+            # Stage 5 handles: Telegram notification, record_daily_pnl, DD display
             try:
                 from ml.notifications import notify_lifecycle
                 _thesis_id = setup.get("thesis_id")
-                if _thesis_id:
-                    notify_lifecycle(5, _thesis_id, setup.get("timeframe", ""), {},
-                                    setup_data={**setup, "outcome": result["outcome"],
-                                                "rr": result.get("rr", 0)},
-                                    db=self.db)
+                # Generate fallback thesis_id so Stage 5 always fires
+                # (prospect-triggered trades may have NULL thesis_id)
+                if not _thesis_id:
+                    import hashlib
+                    _fb_src = f"resolve-{setup.get('id', 'unknown')}-{setup.get('direction', '')}"
+                    _thesis_id = "r-" + hashlib.md5(_fb_src.encode()).hexdigest()[:6]
+                    logger.info("Stage 5 fallback thesis_id: %s (setup %s)", _thesis_id, setup.get("id"))
+                notify_lifecycle(5, _thesis_id, setup.get("timeframe", ""), {},
+                                setup_data={**setup, "outcome": result["outcome"],
+                                            "rr": result.get("rr", 0)},
+                                db=self.db)
             except Exception as e:
-                logger.debug("Lifecycle stage 5 failed: %s", e)
+                logger.warning("Lifecycle stage 5 failed: %s", e)
 
             # ── Hash invalidation: force re-analysis on next scan ──
             tf = setup.get('timeframe', '1h')
@@ -4053,6 +4067,36 @@ class ScannerEngine:
         except Exception as e:
             print(f"[MONITOR] Trade logging FAILED for {setup.get('id', '?')}: {e}")
             logger.error("Scanner: trade logging failed: %s", e, exc_info=True)
+
+            # ── CRITICAL: Ensure Stage 5 notification + DD update even if logging fails ──
+            # The try block above covers ClaudeAnalysisBridge, feature extraction,
+            # and ML pipeline. If ANY crash before Stage 5, the user gets no
+            # notification and DD is never updated. This safety net fires Stage 5.
+            try:
+                from ml.notifications import notify_lifecycle
+                import hashlib
+                _thesis_id = setup.get("thesis_id")
+                if not _thesis_id:
+                    _fb_src = f"resolve-{setup.get('id', 'unknown')}-{setup.get('direction', '')}"
+                    _thesis_id = "r-" + hashlib.md5(_fb_src.encode()).hexdigest()[:6]
+                notify_lifecycle(5, _thesis_id, setup.get("timeframe", ""), {},
+                                setup_data={**setup, "outcome": result["outcome"],
+                                            "rr": result.get("rr", 0)},
+                                db=self.db)
+                logger.info("Safety-net Stage 5 fired for %s after logging failure", setup.get("id"))
+            except Exception as notify_err:
+                logger.error("Safety-net Stage 5 ALSO failed: %s", notify_err)
+                # Last resort: at least update DD in the database
+                try:
+                    from ml.notifications import record_daily_pnl, _calc_lot_size
+                    _eff_sl = setup.get("calibrated_sl") or setup.get("sl_price", 0)
+                    _lot = _calc_lot_size(setup.get("entry_price", 0), _eff_sl)
+                    _pnl = result.get("rr", 0) * _lot["risk_dollars"] if _lot["risk_dollars"] else 0
+                    if _pnl:
+                        record_daily_pnl(_pnl)
+                        logger.info("Last-resort DD update: $%.0f for setup %s", _pnl, setup.get("id"))
+                except Exception as dd_err:
+                    logger.error("Last-resort DD update failed: %s", dd_err)
 
     def _trigger_post_resolution_scan(self, timeframe: str, outcome: str):
         """Immediate re-analysis after trade resolution.
