@@ -519,7 +519,7 @@ class ScannerEngine:
                     _last_close = candles[-1].get("close", 0) if candles else 0
                     # Quick structural score (reuse features.py detectors)
                     _obs = detect_order_blocks(candles, _atr) if len(candles) >= 5 and _atr > 0 else []
-                    _fvgs = detect_fvgs(candles) if len(candles) >= 3 else []
+                    _fvgs = detect_fvgs(candles, _atr) if len(candles) >= 3 else []
                     _sweeps = detect_liquidity(candles) if len(candles) >= 10 else []
                     _struct_score = len(_obs) + len(_fvgs) + len(_sweeps)
                     _confluence = min(
@@ -3925,7 +3925,7 @@ class ScannerEngine:
                     if not enriched.get("orderBlocks"):
                         enriched["orderBlocks"] = detect_order_blocks(tf_candles, atr) if atr > 0 else []
                     if not enriched.get("fvgs"):
-                        enriched["fvgs"] = detect_fvgs(tf_candles)
+                        enriched["fvgs"] = detect_fvgs(tf_candles, atr) if atr > 0 else []
                     if not enriched.get("liquidity"):
                         enriched["liquidity"] = detect_liquidity(tf_candles)
 

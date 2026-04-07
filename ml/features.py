@@ -572,12 +572,21 @@ def classify_setup_type(analysis: dict, candles: list[dict] = None,
 
 def detect_order_blocks(candles: list[dict], atr: float,
                         displacement_threshold: float = 1.5) -> list[dict]:
-    """Detect order blocks from raw OHLC candle data.
+    """Detect order blocks from raw OHLC candle data (ICT definition).
 
-    An OB forms when a displacement candle (body > threshold * ATR) occurs.
-    The candle immediately before the displacement is marked as the OB.
+    A bullish OB is the last *bearish* (down-close) candle before a bullish
+    displacement (body > threshold × ATR). The OB zone is the candle's BODY
+    (open to close), not the full wick range — the body is the institutional
+    footprint; wicks are just liquidity probes.
 
-    Returns list of dicts: {type, high, low, index, body_size}
+    A bearish OB is the last *bullish* (up-close) candle before a bearish
+    displacement. Same body-only zone logic.
+
+    If there's no opposing candle immediately before the displacement, we
+    search back up to 3 candles to find the last opposing one (handles
+    consecutive same-direction candles before displacement).
+
+    Returns list of dicts: {type, high, low, index, body_size, strength}
     """
     if len(candles) < 2 or atr <= 0:
         return []
@@ -591,59 +600,164 @@ def detect_order_blocks(candles: list[dict], atr: float,
         if body <= threshold:
             continue
 
-        prev = candles[i - 1]
-        if c["close"] > c["open"]:
-            # Bullish displacement → preceding candle is bullish OB
-            obs.append({
-                "type": "bullish",
-                "high": prev["high"],
-                "low": prev["low"],
-                "index": i - 1,
-                "body_size": prev["high"] - prev["low"],
-            })
+        is_bullish_displacement = c["close"] > c["open"]
+
+        # Search back up to 3 candles for the last opposing candle
+        ob_candle = None
+        ob_index = None
+        lookback = min(3, i)
+        for j in range(1, lookback + 1):
+            prev = candles[i - j]
+            prev_is_bearish = prev["close"] < prev["open"]
+            prev_is_bullish = prev["close"] > prev["open"]
+
+            if is_bullish_displacement and prev_is_bearish:
+                # Bullish OB: last bearish candle before bullish displacement
+                ob_candle = prev
+                ob_index = i - j
+                break
+            elif not is_bullish_displacement and prev_is_bullish:
+                # Bearish OB: last bullish candle before bearish displacement
+                ob_candle = prev
+                ob_index = i - j
+                break
+
+        if ob_candle is None:
+            continue
+
+        # OB zone = candle body (not wicks)
+        ob_open = ob_candle["open"]
+        ob_close = ob_candle["close"]
+        ob_high = max(ob_open, ob_close)
+        ob_low = min(ob_open, ob_close)
+        ob_body = ob_high - ob_low
+
+        # Skip doji / tiny-body candles (body < 0.2 ATR)
+        if ob_body < atr * 0.2:
+            continue
+
+        # Strength based on displacement size relative to ATR
+        disp_ratio = body / atr
+        if disp_ratio >= 2.5:
+            strength = "strong"
+        elif disp_ratio >= 1.8:
+            strength = "moderate"
         else:
-            # Bearish displacement → preceding candle is bearish OB
-            obs.append({
-                "type": "bearish",
-                "high": prev["high"],
-                "low": prev["low"],
-                "index": i - 1,
-                "body_size": prev["high"] - prev["low"],
-            })
+            strength = "weak"
+
+        ob_type = "bullish" if is_bullish_displacement else "bearish"
+        obs.append({
+            "type": ob_type,
+            "high": ob_high,
+            "low": ob_low,
+            "index": ob_index,
+            "body_size": ob_body,
+            "strength": strength,
+        })
 
     return obs
 
 
-def detect_fvgs(candles: list[dict]) -> list[dict]:
+def detect_fvgs(candles: list[dict], atr: float = 0,
+                min_size_atr: float = 0.1) -> list[dict]:
     """Detect Fair Value Gaps (3-candle imbalances) from raw OHLC data.
 
-    Bullish FVG: candle[i].low > candle[i-2].high  (gap up)
-    Bearish FVG: candle[i].high < candle[i-2].low  (gap down)
+    ICT definition — the gap between candle 1's wick and candle 3's wick
+    that candle 2's body displaced through:
 
-    Returns list of dicts: {type, high, low, index, size}
+    Bullish FVG: candle[i].low > candle[i-2].high  (gap up)
+      → zone = candle[i-2].high (bottom) to candle[i].low (top)
+    Bearish FVG: candle[i].high < candle[i-2].low  (gap down)
+      → zone = candle[i].high (bottom) to candle[i-2].low (top)
+
+    Also checks subsequent candles to determine fill status:
+      - filled = True if price has fully traded through the gap
+      - fill_percentage = how much of the gap has been filled (0-100)
+
+    Args:
+        candles: OHLC candle list (chronological)
+        atr: Average True Range for minimum size filtering. If 0, no filter.
+        min_size_atr: Minimum FVG size as fraction of ATR (default 0.1 = 10%)
+
+    Returns list of dicts: {type, high, low, index, size, filled, fill_percentage}
     """
     if len(candles) < 3:
         return []
 
+    min_size = atr * min_size_atr if atr > 0 else 0
     gaps = []
+
     for i in range(2, len(candles)):
-        # Bullish FVG: current low above the high from 2 candles ago
+        # Bullish FVG: candle 3 low above candle 1 high
         if candles[i]["low"] > candles[i - 2]["high"]:
+            fvg_high = candles[i]["low"]
+            fvg_low = candles[i - 2]["high"]
+            fvg_size = fvg_high - fvg_low
+
+            if fvg_size < min_size:
+                continue
+
+            # Check fill from subsequent candles
+            filled = False
+            fill_pct = 0.0
+            deepest_penetration = 0.0
+            for j in range(i + 1, len(candles)):
+                # For bullish FVG, price filling means coming DOWN into the gap
+                if candles[j]["low"] <= fvg_low:
+                    filled = True
+                    fill_pct = 100.0
+                    break
+                elif candles[j]["low"] < fvg_high:
+                    penetration = fvg_high - candles[j]["low"]
+                    deepest_penetration = max(deepest_penetration, penetration)
+
+            if not filled and fvg_size > 0:
+                fill_pct = round((deepest_penetration / fvg_size) * 100, 1)
+
             gaps.append({
                 "type": "bullish",
-                "high": candles[i]["low"],
-                "low": candles[i - 2]["high"],
+                "high": fvg_high,
+                "low": fvg_low,
                 "index": i - 1,
-                "size": candles[i]["low"] - candles[i - 2]["high"],
+                "size": fvg_size,
+                "filled": filled,
+                "fill_percentage": fill_pct,
             })
-        # Bearish FVG: current high below the low from 2 candles ago
+
+        # Bearish FVG: candle 3 high below candle 1 low
         if candles[i]["high"] < candles[i - 2]["low"]:
+            fvg_high = candles[i - 2]["low"]
+            fvg_low = candles[i]["high"]
+            fvg_size = fvg_high - fvg_low
+
+            if fvg_size < min_size:
+                continue
+
+            # Check fill from subsequent candles
+            filled = False
+            fill_pct = 0.0
+            deepest_penetration = 0.0
+            for j in range(i + 1, len(candles)):
+                # For bearish FVG, price filling means coming UP into the gap
+                if candles[j]["high"] >= fvg_high:
+                    filled = True
+                    fill_pct = 100.0
+                    break
+                elif candles[j]["high"] > fvg_low:
+                    penetration = candles[j]["high"] - fvg_low
+                    deepest_penetration = max(deepest_penetration, penetration)
+
+            if not filled and fvg_size > 0:
+                fill_pct = round((deepest_penetration / fvg_size) * 100, 1)
+
             gaps.append({
                 "type": "bearish",
-                "high": candles[i - 2]["low"],
-                "low": candles[i]["high"],
+                "high": fvg_high,
+                "low": fvg_low,
                 "index": i - 1,
-                "size": candles[i - 2]["low"] - candles[i]["high"],
+                "size": fvg_size,
+                "filled": filled,
+                "fill_percentage": fill_pct,
             })
 
     return gaps

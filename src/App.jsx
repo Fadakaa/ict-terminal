@@ -953,33 +953,42 @@ export default function App() {
 
     // ── ICT overlays ──
     if (analysis) {
-      // Order Blocks
+      // Order Blocks — use candleIndex or index (mechanical detector uses "index")
       analysis.orderBlocks?.forEach((ob) => {
-        const ci = Math.max(0, Math.min(ob.candleIndex ?? 0, candles.length - 1));
+        const ci = Math.max(0, Math.min(ob.candleIndex ?? ob.index ?? 0, candles.length - 1));
         const ox = x(ci) ?? 0;
         const ow = Math.max(0, w - ox);
         const bCol = ob.type === "bullish" ? "#26a69a" : "#ef5350";
+        const strength = ob.strength || "moderate";
+        const opacity = strength === "strong" ? 0.15 : strength === "moderate" ? 0.1 : 0.06;
         g.append("rect").attr("x", ox).attr("y", y(ob.high)).attr("width", ow)
           .attr("height", Math.max(1, y(ob.low) - y(ob.high)))
-          .attr("fill", ob.type === "bullish" ? "rgba(38,166,154,0.1)" : "rgba(239,83,80,0.1)")
+          .attr("fill", ob.type === "bullish" ? `rgba(38,166,154,${opacity})` : `rgba(239,83,80,${opacity})`)
           .attr("stroke", bCol).attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
         g.append("text").attr("x", ox + 3).attr("y", y(ob.high) - 2)
           .attr("fill", bCol).attr("font-size", "8px").attr("font-family", "monospace")
-          .text(ob.type === "bullish" ? "BULL OB" : "BEAR OB");
+          .text(`${ob.type === "bullish" ? "BULL" : "BEAR"} OB${strength === "strong" ? " ★" : ""}`);
       });
 
-      // FVGs
+      // FVGs — use startIndex or index (mechanical detector uses "index")
+      // Filled FVGs rendered dimmer; open FVGs rendered brighter
       analysis.fvgs?.forEach((fvg) => {
-        const si = Math.max(0, Math.min(fvg.startIndex ?? 0, candles.length - 1));
+        const si = Math.max(0, Math.min(fvg.startIndex ?? fvg.index ?? 0, candles.length - 1));
         const fx = x(si) ?? 0;
         const fw = Math.max(0, w - fx);
+        const isFilled = fvg.filled === true || fvg.fill_percentage >= 100;
         const fCol = fvg.type === "bullish" ? "#64b5f6" : "#ffa726";
+        const fillOpacity = isFilled ? 0.03 : 0.12;
+        const strokeOpacity = isFilled ? 0.3 : 0.8;
         g.append("rect").attr("x", fx).attr("y", y(fvg.high)).attr("width", fw)
           .attr("height", Math.max(1, y(fvg.low) - y(fvg.high)))
-          .attr("fill", fvg.type === "bullish" ? "rgba(100,181,246,0.07)" : "rgba(255,167,38,0.07)")
-          .attr("stroke", fCol).attr("stroke-width", 0.75).attr("stroke-dasharray", "3,3");
+          .attr("fill", fvg.type === "bullish" ? `rgba(100,181,246,${fillOpacity})` : `rgba(255,167,38,${fillOpacity})`)
+          .attr("stroke", fCol).attr("stroke-width", isFilled ? 0.5 : 0.75)
+          .attr("stroke-dasharray", "3,3").attr("opacity", strokeOpacity);
+        const label = isFilled ? "FVG ✗" : fvg.fill_percentage > 0 ? `FVG ${Math.round(fvg.fill_percentage)}%` : "FVG";
         g.append("text").attr("x", fx + 3).attr("y", y(fvg.high) - 2)
-          .attr("fill", fCol).attr("font-size", "7.5px").attr("font-family", "monospace").text("FVG");
+          .attr("fill", fCol).attr("font-size", "7.5px").attr("font-family", "monospace")
+          .attr("opacity", isFilled ? 0.4 : 1).text(label);
       });
 
       // Liquidity levels
