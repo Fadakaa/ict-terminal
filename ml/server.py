@@ -945,6 +945,17 @@ def entry_placement_recompute():
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Annotation Analysis Endpoints
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.get("/annotations/analysis")
+def annotations_analysis():
+    """Compare Claude's OB/FVG annotations vs trade outcomes."""
+    from ml.analyse_annotations import analyse
+    return analyse()
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Calibration Layer Performance Endpoints
 # ═══════════════════════════════════════════════════════════════════════
 
