@@ -31,8 +31,8 @@ _DEFAULT_CONFIG = {
     "retrain_on_n_new_trades": 10,
     "classification_labels": ["stopped_out", "tp1_hit", "tp2_hit", "tp3_hit", "no_trade", "expired"],
     "quantile_percentiles": [0.05, 0.25, 0.50, 0.75, 0.90],
-    "autogluon_time_limit": 120,
-    "autogluon_presets": "medium_quality",
+    "autogluon_time_limit": 300,
+    "autogluon_presets": "best_quality",
     "feature_version": 2,
     # Bayesian updater
     "bayesian_prior_alpha": 1,
@@ -79,7 +79,7 @@ _DEFAULT_CONFIG = {
     "drift_critical_threshold": 3.0,
     "drift_check_interval": 20,
     # OOS evaluation + active learning
-    "oos_min_accuracy": 0.55,
+    "oos_min_accuracy": 0.58,
     "oos_min_test_trades": 30,
     "eval_holdout_fraction": 0.2,
     "retrain_every_n_trades": 50,

@@ -97,10 +97,9 @@ def _insufficient_data_response(count: int) -> dict:
 
 def _run_inference(features: dict, classifier_path: str, model_dir: str,
                    count: int, cfg: dict) -> dict:
-    """Run AutoGluon inference. Handles both binary and multi3 models."""
+    """Run AutoGluon inference — binary (win/loss) only."""
     try:
         from autogluon.tabular import TabularPredictor
-        from ml.training import get_active_model_type
         import pandas as pd
 
         predictor = TabularPredictor.load(classifier_path, verbosity=0)
@@ -112,24 +111,15 @@ def _run_inference(features: dict, classifier_path: str, model_dir: str,
                 feat_df = feat_df.drop(columns=[col])
 
         probs = predictor.predict_proba(feat_df).iloc[0].to_dict()
-        active_type = get_active_model_type(model_dir)
 
-        # For binary models: map "win"/"loss" to a unified classification
-        win_outcomes = {"tp1", "tp2", "tp3", "tp1_hit", "tp2_hit", "tp3_hit", "win"}
-        if active_type == "binary":
-            win_prob = probs.get("win", 0)
-            loss_prob = probs.get("loss", 0)
-            confidence = max(win_prob, loss_prob)
-            # Present as unified classification
-            classification = {
-                "win": round(win_prob, 4),
-                "loss": round(loss_prob, 4),
-            }
-        else:
-            # Multi3: stopped_out / tp1 / runner
-            confidence = max(probs.values()) if probs else 0
-            classification = {k: round(v, 4) for k, v in probs.items()}
-            win_prob = sum(v for k, v in probs.items() if k in win_outcomes)
+        # Binary model: win/loss probabilities
+        win_prob = probs.get("win", 0)
+        loss_prob = probs.get("loss", 0)
+        confidence = max(win_prob, loss_prob)
+        classification = {
+            "win": round(win_prob, 4),
+            "loss": round(loss_prob, 4),
+        }
 
         importances = {}
         try:
@@ -142,7 +132,7 @@ def _run_inference(features: dict, classifier_path: str, model_dir: str,
             "confidence": round(confidence, 4),
             "win_probability": round(win_prob, 4),
             "classification": classification,
-            "active_model_type": active_type,
+            "active_model_type": "binary",
             "suggested_sl": None,
             "suggested_tp1": None,
             "suggested_tp2": None,

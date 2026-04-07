@@ -1,9 +1,9 @@
-"""Training pipeline — AutoGluon classifier + quantile regression.
+"""Training pipeline — AutoGluon binary classifier + quantile regression.
 
-Supports two classifier modes:
-  - Binary:  win vs loss (default when data is sparse/low-quality)
-  - Multi-3: stopped_out / tp1 / tp2 / tp3 (upgrades automatically when
-    rich-feature data exceeds 100 samples AND multi-3 OOS accuracy > 0.45)
+Binary-only mode: predicts win vs loss.  Multi-3 (stopped_out/tp1/runner)
+was disabled after analysis showed repeated OOS degradation over 5 retrains
+(43% OOS accuracy, model_trustworthy=false).  Binary is simpler, needs less
+data, and avoids the overfitting issues that plagued multi-class.
 
 Active model type is recorded in model_meta.json.  The prediction module
 reads this file to load the correct model.
@@ -88,11 +88,8 @@ def get_model_meta(model_dir: str) -> dict:
 
 
 def is_multi3_active(config: dict = None) -> bool:
-    """Check if multi3 model is active and meets OOS threshold."""
-    cfg = config or get_config()
-    meta = get_model_meta(cfg["model_dir"])
-    return (meta.get("upgraded_to_multi3", False)
-            and meta.get("multi3_oos_accuracy", 0) >= MULTI3_OOS_THRESHOLD)
+    """Multi-3 is disabled — always returns False."""
+    return False
 
 
 def train_classifier(db, config: dict = None, dataset_manager=None) -> dict:
@@ -251,127 +248,26 @@ def train_classifier(db, config: dict = None, dataset_manager=None) -> dict:
     ).fit(train_binary, **fit_kwargs)
 
     # ──────────────────────────────────────────────
-    # STEP 2: Conditionally train multi-3 model
-    # (stopped_out / tp1 / runner where runner = tp2+tp3)
+    # STEP 2: Multi-3 DISABLED — binary only
+    # Multi-3 showed repeated OOS degradation (43% accuracy after 5 retrains).
+    # Binary is more stable with the current feature set and data volume.
     # ──────────────────────────────────────────────
     multi3_oos = 0
-    multi3_oos_live = None
-    multi3_oos_live_count = 0
-    backtest_count = 0
-    eval_source = "all"
     multi3_trained = False
     active_model_type = "binary"
-
-    if rich_count >= RICH_FEATURE_MIN_FOR_MULTI3:
-        logger.info("Rich features >= %d — training multi-3 classifier",
-                     RICH_FEATURE_MIN_FOR_MULTI3)
-
-        # Remap outcome to 3 classes: stopped_out / tp1 / runner
-        multi3_label = "__multi3_outcome"
-        train_df_multi3 = train_df.copy()
-        outcome_map = {}
-        for o in train_df_multi3[label].unique():
-            if o in ("stopped_out",):
-                outcome_map[o] = "stopped_out"
-            elif o in ("tp1", "tp1_hit"):
-                outcome_map[o] = "tp1"
-            elif o in ("tp2", "tp2_hit", "tp3", "tp3_hit"):
-                outcome_map[o] = "runner"
-            else:
-                outcome_map[o] = "stopped_out"  # default unknown → loss
-        train_df_multi3[multi3_label] = train_df_multi3[label].map(outcome_map)
-
-        multi3_path = os.path.join(cfg["model_dir"], "classifier_multi3")
-        os.makedirs(multi3_path, exist_ok=True)
-
-        m3_cols = [c for c in train_df_multi3.columns
-                   if c in feature_cols or c == multi3_label
-                   or (c == "sample_weight" and has_weights)]
-        train_multi3 = train_df_multi3[m3_cols]
-
-        # Holdout eval for multi3
-        if len(train_portion) >= 20 and len(holdout_df) >= 5:
-            hp_m3 = train_portion.copy()
-            hp_m3[multi3_label] = hp_m3[label].map(outcome_map)
-            hh_m3 = holdout_df.copy()
-            hh_m3[multi3_label] = hh_m3[label].map(outcome_map)
-            hp_m3_cols = [c for c in hp_m3.columns
-                          if c in feature_cols or c == multi3_label
-                          or (c == "sample_weight" and has_weights)]
-            with tempfile.TemporaryDirectory() as tmpdir:
-                try:
-                    mp = TabularPredictor(
-                        label=multi3_label, path=tmpdir, problem_type="multiclass",
-                        sample_weight="sample_weight" if has_weights else None,
-                        verbosity=0,
-                    ).fit(hp_m3[hp_m3_cols], **fast_kwargs)
-                    multi3_oos = mp.evaluate(hh_m3[hp_m3_cols]).get("accuracy", 0)
-
-                    # Dual OOS: compute live-only accuracy
-                    if "source" in holdout_df.columns:
-                        live_mask = holdout_df["source"] != "wfo"
-                        # Map source column through to hh_m3
-                        hh_m3["__source"] = holdout_df["source"].values
-                        live_test = hh_m3[hh_m3["__source"] == "live"]
-                        multi3_oos_live_count = len(live_test)
-                        if multi3_oos_live_count >= 30:
-                            live_eval_cols = [c for c in hp_m3_cols if c != "__source"]
-                            multi3_oos_live = mp.evaluate(
-                                live_test[live_eval_cols]).get("accuracy", 0)
-                        hh_m3 = hh_m3.drop(columns=["__source"])
-                except Exception as e:
-                    logger.warning("Multi3 holdout eval failed: %s", e)
-
-        # Production multi3 model
-        TabularPredictor(
-            label=multi3_label, path=multi3_path, problem_type="multiclass",
-            sample_weight="sample_weight" if has_weights else None,
-        ).fit(train_multi3, **fit_kwargs)
-        multi3_trained = True
-
-        # Count sources for metadata
-        if "source" in df.columns:
-            backtest_count = int((df["source"] == "backtest").sum())
-            live_total = int((df["source"] == "live").sum())
-        else:
-            backtest_count = 0
-            live_total = len(df)
-
-        # Gate logic: use live-only OOS once 200+ live rows exist
-        if live_total >= 200 and multi3_oos_live is not None:
-            gate_oos = multi3_oos_live
-            eval_source = "live"
-        else:
-            gate_oos = multi3_oos
-            eval_source = "all"
-
-        # Auto-upgrade: use multi3 if it beats the threshold
-        if gate_oos >= MULTI3_OOS_THRESHOLD:
-            active_model_type = "multi3"
-            logger.info("Multi-3 OOS %.1f%% (%s) >= %.0f%% threshold — UPGRADED to multi3",
-                        gate_oos * 100, eval_source, MULTI3_OOS_THRESHOLD * 100)
-        else:
-            logger.info("Multi-3 OOS %.1f%% (%s) < %.0f%% threshold — keeping binary",
-                        gate_oos * 100, eval_source, MULTI3_OOS_THRESHOLD * 100)
+    logger.info("Binary-only mode — multi-3 training disabled")
 
     # ──────────────────────────────────────────────
     # STEP 3: Save model_meta.json + backwards-compat classifier symlink
     # ──────────────────────────────────────────────
     meta = _save_model_meta(
         cfg["model_dir"], active_model_type, rich_count, binary_oos, multi3_oos,
-        multi3_oos_live_accuracy=round(multi3_oos_live, 4) if multi3_oos_live is not None else None,
-        multi3_oos_live_sample_size=multi3_oos_live_count,
-        backtest_setups_count=backtest_count,
-        active_evaluation_source=eval_source,
     )
 
-    # Copy the active model to the canonical "classifier" path for backwards compat
-    # (prediction.py loads from model_dir/classifier)
+    # Copy binary model to the canonical "classifier" path for backwards compat
     import shutil
     canonical_path = os.path.join(cfg["model_dir"], "classifier")
-    source_path = os.path.join(cfg["model_dir"],
-                               "classifier_binary" if active_model_type == "binary"
-                               else "classifier_multi3")
+    source_path = os.path.join(cfg["model_dir"], "classifier_binary")
     try:
         if os.path.exists(canonical_path):
             shutil.rmtree(canonical_path)

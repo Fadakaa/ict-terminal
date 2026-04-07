@@ -720,26 +720,16 @@ class MLCalibrator:
             dm = TrainingDatasetManager()
             result = predict(analysis, candles, "1h", db=db, dataset_manager=dm)
             if result:
-                # Use explicit win_probability if available (handles both binary and multi3)
                 win_prob = result.get("win_probability", result.get("confidence", 0.5))
-                active_type = result.get("active_model_type", "unknown")
                 classification = result.get("classification", {})
 
-                ag_result = {
+                return {
                     "win_probability": win_prob,
-                    "active_model_type": active_type,
+                    "active_model_type": "binary",
                     "classification": classification,
                     "predicted_p95_drawdown_atr": result.get("suggested_sl"),
                     "predicted_favorable_atr": result.get("suggested_tp1"),
                 }
-
-                # Multi-3 enhancements (only when multi3 is active)
-                from ml.training import is_multi3_active
-                if is_multi3_active(self.cfg) and active_type == "multi3":
-                    ag_result.update(
-                        self._compute_multi3_enhancements(classification, parsed))
-
-                return ag_result
         except Exception:
             pass
         return None

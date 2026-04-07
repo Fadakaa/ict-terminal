@@ -70,43 +70,49 @@ def _train_and_eval(train_df: pd.DataFrame, test_df: pd.DataFrame,
     if len(train_df) < 20 or len(test_df) < 5:
         return {"accuracy": None, "trades": 0}
 
+    # Use binary label for evaluation (win vs loss)
+    binary_label = "__binary_outcome"
+    train_binary = train_df.copy()
+    test_binary = test_df.copy()
+    train_binary[binary_label] = train_binary[label].isin(WIN_OUTCOMES).map(
+        {True: "win", False: "loss"})
+    test_binary[binary_label] = test_binary[label].isin(WIN_OUTCOMES).map(
+        {True: "win", False: "loss"})
+
+    drop_cols = [label, "is_win"]
+
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             predictor = TabularPredictor(
-                label=label,
+                label=binary_label,
                 path=tmpdir,
-                problem_type="multiclass",
+                problem_type="binary",
                 verbosity=0,
             ).fit(
-                train_df.drop(columns=["is_win"], errors="ignore"),
-                time_limit=min(cfg.get("autogluon_time_limit", 120), 60),
+                train_binary.drop(columns=drop_cols, errors="ignore"),
+                time_limit=min(cfg.get("autogluon_time_limit", 300), 90),
                 presets="best_quality",
                 verbosity=0,
             )
 
-            preds = predictor.predict(test_df.drop(columns=[label, "is_win"],
-                                                   errors="ignore"))
-            actual = test_df[label]
+            eval_df = test_binary.drop(columns=drop_cols, errors="ignore")
+            preds = predictor.predict(eval_df)
+            actual_binary = test_binary[binary_label]
 
-            # Exact multiclass accuracy
-            exact_acc = (preds == actual).mean()
+            # Binary accuracy
+            binary_acc = (preds == actual_binary).mean()
 
-            # Binary win/loss accuracy
-            pred_win = preds.isin(WIN_OUTCOMES).astype(int)
-            actual_win = test_df["is_win"]
-            binary_acc = (pred_win == actual_win).mean()
-
-            # Per-prediction win probabilities
+            # Win probabilities
             try:
-                proba = predictor.predict_proba(
-                    test_df.drop(columns=[label, "is_win"], errors="ignore"))
-                win_cols = [c for c in proba.columns if c in WIN_OUTCOMES]
-                win_probs = proba[win_cols].sum(axis=1).tolist()
+                proba = predictor.predict_proba(eval_df)
+                win_probs = proba["win"].tolist() if "win" in proba.columns else []
             except Exception:
                 win_probs = []
 
+            actual_win = test_df["is_win"]
+
             return {
-                "accuracy": round(float(exact_acc), 4),
+                "accuracy": round(float(binary_acc), 4),
                 "binary_accuracy": round(float(binary_acc), 4),
                 "trades": len(test_df),
                 "win_probs": win_probs,
