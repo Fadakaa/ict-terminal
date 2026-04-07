@@ -288,6 +288,32 @@ def beliefs(db: TradeLogger = Depends(get_db)):
     return get_beliefs(state)
 
 
+@app.post("/model/reset")
+def model_reset():
+    """Wipe old AutoGluon model files so retrain starts fresh.
+    Also clears stale SQLite journal/WAL files that cause disk I/O errors."""
+    import shutil, glob as _glob
+    cfg = get_config()
+    removed = []
+    for name in ("classifier", "classifier_binary", "classifier_multi3",
+                 "quantile_mfe", "model_meta.json", "classifier_evaluation.json"):
+        p = os.path.join(cfg["model_dir"], name)
+        if os.path.exists(p):
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+            else:
+                os.remove(p)
+            removed.append(name)
+    # Clear stale SQLite lock/journal files
+    db_path = cfg.get("db_path", "")
+    for suffix in ("-journal", "-wal", "-shm"):
+        jf = db_path + suffix
+        if os.path.exists(jf):
+            os.remove(jf)
+            removed.append(os.path.basename(jf))
+    return {"status": "reset", "removed": removed}
+
+
 @app.post("/retrain")
 def retrain(db: TradeLogger = Depends(get_db), dm=Depends(get_dataset_manager)):
     cfg = get_config()
