@@ -400,7 +400,8 @@ def _extract_narrative_feature_importance(model_dir: str, classifier_path: str):
     if TabularPredictor is None:
         return
 
-    predictor = TabularPredictor.load(classifier_path, verbosity=0)
+    predictor = TabularPredictor.load(classifier_path, verbosity=0,
+                                      require_version_match=False)
 
     try:
         imp_df = predictor.feature_importance(silent=True)

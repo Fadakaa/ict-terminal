@@ -102,7 +102,8 @@ def _run_inference(features: dict, classifier_path: str, model_dir: str,
         from autogluon.tabular import TabularPredictor
         import pandas as pd
 
-        predictor = TabularPredictor.load(classifier_path, verbosity=0)
+        predictor = TabularPredictor.load(classifier_path, verbosity=0,
+                                          require_version_match=False)
         feat_df = pd.DataFrame([features])
 
         # Remove non-feature columns if present
@@ -145,7 +146,8 @@ def _run_inference(features: dict, classifier_path: str, model_dir: str,
         quantile_path = os.path.join(model_dir, "quantile_mfe")
         if os.path.exists(quantile_path) and count >= cfg["min_training_samples_quantile"]:
             try:
-                q_predictor = TabularPredictor.load(quantile_path)
+                q_predictor = TabularPredictor.load(quantile_path,
+                                                    require_version_match=False)
                 q_pred = q_predictor.predict(feat_df).iloc[0]
                 # Quantile predictions inform SL/TP suggestions
                 entry_price = features.get("entry_price", 0)

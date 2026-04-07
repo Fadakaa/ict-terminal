@@ -341,7 +341,8 @@ def model_info():
 
     try:
         from autogluon.tabular import TabularPredictor
-        predictor = TabularPredictor.load(model_path, verbosity=0)
+        predictor = TabularPredictor.load(model_path, verbosity=0,
+                                          require_version_match=False)
 
         # Leaderboard: model names + scores
         lb = predictor.leaderboard(silent=True)
