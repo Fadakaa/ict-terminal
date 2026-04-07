@@ -953,42 +953,53 @@ export default function App() {
 
     // ── ICT overlays ──
     if (analysis) {
-      // Order Blocks — use candleIndex or index (mechanical detector uses "index")
+      // Order Blocks — mechanical (solid border) vs Claude (dashed, dimmer)
       analysis.orderBlocks?.forEach((ob) => {
         const ci = Math.max(0, Math.min(ob.candleIndex ?? ob.index ?? 0, candles.length - 1));
         const ox = x(ci) ?? 0;
         const ow = Math.max(0, w - ox);
         const bCol = ob.type === "bullish" ? "#26a69a" : "#ef5350";
+        const isMech = ob.source === "mechanical";
         const strength = ob.strength || "moderate";
-        const opacity = strength === "strong" ? 0.15 : strength === "moderate" ? 0.1 : 0.06;
+        const opacity = isMech
+          ? (strength === "strong" ? 0.18 : 0.12)
+          : (strength === "strong" ? 0.1 : 0.06);
         g.append("rect").attr("x", ox).attr("y", y(ob.high)).attr("width", ow)
           .attr("height", Math.max(1, y(ob.low) - y(ob.high)))
           .attr("fill", ob.type === "bullish" ? `rgba(38,166,154,${opacity})` : `rgba(239,83,80,${opacity})`)
-          .attr("stroke", bCol).attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
+          .attr("stroke", bCol).attr("stroke-width", isMech ? 1.2 : 0.8)
+          .attr("stroke-dasharray", isMech ? "none" : "4,3");
+        const tag = ob.type === "bullish" ? "BULL" : "BEAR";
+        const suffix = strength === "strong" ? " ★" : "";
+        const srcTag = isMech ? "" : " ᶜ";
         g.append("text").attr("x", ox + 3).attr("y", y(ob.high) - 2)
           .attr("fill", bCol).attr("font-size", "8px").attr("font-family", "monospace")
-          .text(`${ob.type === "bullish" ? "BULL" : "BEAR"} OB${strength === "strong" ? " ★" : ""}`);
+          .attr("opacity", isMech ? 1 : 0.7)
+          .text(`${tag} OB${suffix}${srcTag}`);
       });
 
-      // FVGs — use startIndex or index (mechanical detector uses "index")
+      // FVGs — mechanical (solid border) vs Claude (dashed, dimmer)
       // Filled FVGs rendered dimmer; open FVGs rendered brighter
       analysis.fvgs?.forEach((fvg) => {
         const si = Math.max(0, Math.min(fvg.startIndex ?? fvg.index ?? 0, candles.length - 1));
         const fx = x(si) ?? 0;
         const fw = Math.max(0, w - fx);
         const isFilled = fvg.filled === true || fvg.fill_percentage >= 100;
+        const isMech = fvg.source === "mechanical";
         const fCol = fvg.type === "bullish" ? "#64b5f6" : "#ffa726";
-        const fillOpacity = isFilled ? 0.03 : 0.12;
-        const strokeOpacity = isFilled ? 0.3 : 0.8;
+        const fillOpacity = isFilled ? 0.03 : (isMech ? 0.14 : 0.08);
+        const strokeOpacity = isFilled ? 0.3 : (isMech ? 0.9 : 0.6);
         g.append("rect").attr("x", fx).attr("y", y(fvg.high)).attr("width", fw)
           .attr("height", Math.max(1, y(fvg.low) - y(fvg.high)))
           .attr("fill", fvg.type === "bullish" ? `rgba(100,181,246,${fillOpacity})` : `rgba(255,167,38,${fillOpacity})`)
-          .attr("stroke", fCol).attr("stroke-width", isFilled ? 0.5 : 0.75)
-          .attr("stroke-dasharray", "3,3").attr("opacity", strokeOpacity);
-        const label = isFilled ? "FVG ✗" : fvg.fill_percentage > 0 ? `FVG ${Math.round(fvg.fill_percentage)}%` : "FVG";
+          .attr("stroke", fCol).attr("stroke-width", isFilled ? 0.5 : (isMech ? 1 : 0.6))
+          .attr("stroke-dasharray", isMech ? "none" : "3,3").attr("opacity", strokeOpacity);
+        const label = isFilled ? "FVG ✗"
+          : fvg.fill_percentage > 0 ? `FVG ${Math.round(fvg.fill_percentage)}%`
+          : `FVG${isMech ? "" : " ᶜ"}`;
         g.append("text").attr("x", fx + 3).attr("y", y(fvg.high) - 2)
           .attr("fill", fCol).attr("font-size", "7.5px").attr("font-family", "monospace")
-          .attr("opacity", isFilled ? 0.4 : 1).text(label);
+          .attr("opacity", isFilled ? 0.4 : (isMech ? 1 : 0.7)).text(label);
       });
 
       // Liquidity levels
@@ -1453,7 +1464,7 @@ export default function App() {
                   <div style={{ ...secT, fontSize: 6.5 }}>ORDER BLOCKS ({analysis.orderBlocks.length})</div>
                   {analysis.orderBlocks.map((ob, i) => (
                     <div key={i} style={{ borderLeft: `2px solid ${ob.type === "bullish" ? "#26a69a" : "#ef5350"}`, paddingLeft: 6, marginBottom: 4 }}>
-                      <div style={{ color: ob.type === "bullish" ? "#26a69a" : "#ef5350", fontSize: 7 }}>{ob.type.toUpperCase()} OB · {ob.strength?.toUpperCase()}</div>
+                      <div style={{ color: ob.type === "bullish" ? "#26a69a" : "#ef5350", fontSize: 7 }}>{ob.type.toUpperCase()} OB · {ob.strength?.toUpperCase()} <span style={{ color: "#555", fontSize: 6 }}>{ob.source === "mechanical" ? "⚙" : "🤖"}</span></div>
                       <div style={{ color: "#444466", fontSize: 7 }}>{ob.high?.toFixed(2)} — {ob.low?.toFixed(2)}</div>
                     </div>
                   ))}
@@ -1464,7 +1475,7 @@ export default function App() {
                   <div style={{ ...secT, fontSize: 6.5 }}>FAIR VALUE GAPS ({analysis.fvgs.length})</div>
                   {analysis.fvgs.map((fvg, i) => (
                     <div key={i} style={{ borderLeft: `2px solid ${fvg.type === "bullish" ? "#64b5f6" : "#ffa726"}`, paddingLeft: 6, marginBottom: 4 }}>
-                      <div style={{ color: fvg.type === "bullish" ? "#64b5f6" : "#ffa726", fontSize: 7 }}>{fvg.type.toUpperCase()} FVG · {fvg.filled ? "FILLED" : "OPEN"}</div>
+                      <div style={{ color: fvg.type === "bullish" ? "#64b5f6" : "#ffa726", fontSize: 7 }}>{fvg.type.toUpperCase()} FVG · {fvg.filled ? "FILLED" : "OPEN"} <span style={{ color: "#555", fontSize: 6 }}>{fvg.source === "mechanical" ? "⚙" : "🤖"}</span></div>
                       <div style={{ color: "#444466", fontSize: 7 }}>{fvg.high?.toFixed(2)} — {fvg.low?.toFixed(2)}</div>
                     </div>
                   ))}

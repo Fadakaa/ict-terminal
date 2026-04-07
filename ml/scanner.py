@@ -3920,14 +3920,54 @@ class ScannerEngine:
 
                     atr = compute_atr(tf_candles, 14)
 
-                    # Supplement empty ICT arrays with mechanical detectors
+                    # ── MERGE strategy: mechanical detectors primary, Claude supplementary ──
+                    # Analysis showed no-zone trades (73.3% WR) slightly outperform zone
+                    # trades (68.6% WR) across 528 trades — so use precise mechanical
+                    # detectors as primary source, keep Claude zones that don't overlap.
                     enriched = dict(raw_analysis)
-                    if not enriched.get("orderBlocks"):
-                        enriched["orderBlocks"] = detect_order_blocks(tf_candles, atr) if atr > 0 else []
-                    if not enriched.get("fvgs"):
-                        enriched["fvgs"] = detect_fvgs(tf_candles, atr) if atr > 0 else []
+                    mech_obs = detect_order_blocks(tf_candles, atr) if atr > 0 else []
+                    mech_fvgs = detect_fvgs(tf_candles, atr) if atr > 0 else []
+                    mech_liq = detect_liquidity(tf_candles)
+
+                    claude_obs = enriched.get("orderBlocks") or []
+                    claude_fvgs = enriched.get("fvgs") or []
+
+                    # Tag sources for chart rendering
+                    for ob in mech_obs:
+                        ob["source"] = "mechanical"
+                    for ob in claude_obs:
+                        ob["source"] = "claude"
+                    for fvg in mech_fvgs:
+                        fvg["source"] = "mechanical"
+                    for fvg in claude_fvgs:
+                        fvg["source"] = "claude"
+
+                    # Merge OBs: mechanical first, then Claude zones that don't overlap
+                    merged_obs = list(mech_obs)
+                    for c_ob in claude_obs:
+                        c_lo, c_hi = c_ob.get("low", 0), c_ob.get("high", 0)
+                        overlaps = any(
+                            m.get("low", 0) <= c_hi and m.get("high", 0) >= c_lo
+                            for m in mech_obs
+                        )
+                        if not overlaps:
+                            merged_obs.append(c_ob)
+
+                    # Merge FVGs: mechanical first, then non-overlapping Claude FVGs
+                    merged_fvgs = list(mech_fvgs)
+                    for c_fvg in claude_fvgs:
+                        c_lo, c_hi = c_fvg.get("low", 0), c_fvg.get("high", 0)
+                        overlaps = any(
+                            m.get("low", 0) <= c_hi and m.get("high", 0) >= c_lo
+                            for m in mech_fvgs
+                        )
+                        if not overlaps:
+                            merged_fvgs.append(c_fvg)
+
+                    enriched["orderBlocks"] = merged_obs
+                    enriched["fvgs"] = merged_fvgs
                     if not enriched.get("liquidity"):
-                        enriched["liquidity"] = detect_liquidity(tf_candles)
+                        enriched["liquidity"] = mech_liq
 
                     # Populate entry zone fields from setup metadata
                     entry_price = setup.get("entry_price", 0)
