@@ -1361,9 +1361,16 @@ def narrative_weights():
         except Exception:
             pass
 
+    # Flatten all killzone weights for the response
+    all_kz = {}
+    for key, bucket in bridge._narrative_weights.items():
+        if isinstance(bucket, dict):
+            all_kz[key] = {k: v.get("weight", 0.5) if isinstance(v, dict) else v
+                           for k, v in bucket.items()}
+
     return {
         "ema_weights": ema_weights,
-        "ema_all_killzones": bridge._narrative_weights,
+        "ema_all_killzones": all_kz,
         "ag_weights": ag_weights,
         "current_killzone": current_kz,
         "active_source": "autogluon" if ag_weights and ag_weights.get("_global") else "ema",
