@@ -618,3 +618,248 @@ def extract_ag_weights(model_dir: str = None, db=None) -> dict:
     result = _extract_narrative_feature_importance(model_dir, classifier_path,
                                                    test_data=test_data)
     return result or {}
+
+
+# ── Outcome-based narrative weights ──────────────────────────────────
+
+
+def compute_narrative_weights_from_outcomes(db=None) -> dict:
+    """Compute narrative field weights from actual trade outcomes.
+
+    For each resolved trade with an Opus narrative, score each field's
+    correctness (reusing ClaudeAnalysisBridge's logic), then compute
+    win-rate lift: P(win | field_aligned) - P(win | field_not_aligned).
+
+    This measures how much *trusting* each narrative field actually
+    predicts winning, segmented by killzone.
+
+    Returns:
+        Segmented weights dict {"_global": {...}, "Asian": {...}, ...}
+        written to narrative_weights_ag.json.
+    """
+    from ml.scanner_db import ScannerDB
+    from ml.claude_bridge import ClaudeAnalysisBridge
+
+    cfg = get_config()
+    if db is None:
+        db = ScannerDB()
+
+    setups = db.get_resolved_setups() if hasattr(db, "get_resolved_setups") else []
+    if not setups:
+        logger.warning("outcome weights: no resolved setups")
+        return {}
+
+    bridge = ClaudeAnalysisBridge()
+    KILLZONE_KEYS = bridge.KILLZONE_KEYS
+
+    # Collect per-field correctness scores + outcomes, grouped by killzone
+    # Each entry: {field: score, "_win": bool, "_kz": str}
+    records = []
+    for setup in setups:
+        cal_json = setup.get("calibration_json") or {}
+        if isinstance(cal_json, str):
+            try:
+                cal_json = json.loads(cal_json)
+            except Exception:
+                continue
+        narrative_json = cal_json.get("opus_narrative", {})
+        if not narrative_json:
+            continue
+
+        outcome = setup.get("actual_result", "") or setup.get("outcome", "")
+        is_win = outcome in WIN_OUTCOMES
+        entry_dir = setup.get("direction", "")
+        kz = setup.get("killzone", "")
+        mfe_atr = setup.get("mfe_atr")
+
+        # Compute per-field correctness using the same logic as EMA update
+        scores = _score_narrative_fields(
+            narrative_json, entry_dir, is_win, outcome, setup, mfe_atr)
+        if scores:
+            scores["_win"] = is_win
+            scores["_kz"] = kz if kz in KILLZONE_KEYS else ""
+            records.append(scores)
+
+    if len(records) < 10:
+        logger.warning("outcome weights: only %d trades with narratives", len(records))
+        return {}
+
+    logger.info("outcome weights: analyzing %d trades", len(records))
+
+    # Compute win-rate lift per field, per group
+    FIELDS = list(bridge.NARRATIVE_FIELDS)
+    ALIGNED_THRESHOLD = 0.6  # score >= this = "field was aligned/correct"
+
+    def _compute_lift(subset: list) -> dict:
+        """Win-rate lift for each field in a subset of records."""
+        weights = {}
+        base_wr = sum(1 for r in subset if r["_win"]) / len(subset) if subset else 0.5
+        for field in FIELDS:
+            aligned = [r for r in subset if r.get(field, 0.5) >= ALIGNED_THRESHOLD]
+            misaligned = [r for r in subset if r.get(field, 0.5) < ALIGNED_THRESHOLD]
+            if len(aligned) >= 3 and len(misaligned) >= 3:
+                wr_aligned = sum(1 for r in aligned if r["_win"]) / len(aligned)
+                wr_misaligned = sum(1 for r in misaligned if r["_win"]) / len(misaligned)
+                lift = wr_aligned - wr_misaligned  # range: -1.0 to 1.0
+                weights[field] = max(0.0, lift)  # only positive lift = useful field
+            else:
+                weights[field] = None  # insufficient data
+        return weights
+
+    def _normalize(raw: dict) -> dict:
+        """Normalize to 0-1 range, using 0.05 floor for non-zero values."""
+        valid = {k: v for k, v in raw.items() if v is not None}
+        if not valid:
+            return {}
+        max_v = max(valid.values()) if valid else 1
+        if max_v <= 0:
+            return {k: 0.5 for k in valid}  # no field has positive lift
+        return {
+            k: round(max(0.05, v / max_v), 4) if v > 0 else 0.0
+            for k, v in valid.items()
+        }
+
+    # Global
+    result = {"_global": _normalize(_compute_lift(records))}
+    raw_global = _compute_lift(records)
+    logger.info("outcome weights global (raw lift): %s",
+                {k: round(v, 4) if v is not None else None for k, v in raw_global.items()})
+
+    # Per-killzone
+    min_kz = cfg.get("narrative_min_kz_trades", 10)
+    for kz in KILLZONE_KEYS:
+        subset = [r for r in records if r["_kz"] == kz]
+        if len(subset) >= min_kz:
+            result[kz] = _normalize(_compute_lift(subset))
+            logger.info("outcome weights %s: %d trades", kz, len(subset))
+
+    # Write
+    model_dir = cfg["model_dir"]
+    path = os.path.join(model_dir, "narrative_weights_ag.json")
+    with open(path, "w") as f:
+        json.dump(result, f, indent=2)
+    logger.info("Outcome-based narrative weights written: %s", list(result.keys()))
+    return result
+
+
+def _score_narrative_fields(narrative_json: dict, entry_direction: str,
+                            is_win: bool, outcome: str, setup: dict,
+                            mfe_atr: float | None = None) -> dict:
+    """Score each narrative field's correctness for a single trade.
+
+    Same logic as ClaudeAnalysisBridge.update_narrative_field_weights but
+    returns the raw scores without applying EMA.
+    """
+    _mfe = mfe_atr or 0.0
+    is_type2_loss = not is_win and _mfe >= 1.0
+    is_type1_loss = not is_win and _mfe < 0.5
+    aligned_loss_score = 0.6 if is_type2_loss else (0.15 if is_type1_loss else 0.3)
+
+    bias = narrative_json.get("directional_bias", "")
+    phase = narrative_json.get("power_of_3_phase", "")
+    pd_zone = narrative_json.get("premium_discount", "")
+    conf = narrative_json.get("phase_confidence", "")
+    intermarket = narrative_json.get("intermarket_synthesis")
+    key_levels = narrative_json.get("key_levels", [])
+    entry_price = setup.get("entry_price", 0)
+
+    scores = {}
+
+    # directional_bias
+    bias_aligned = (
+        (bias == "bullish" and entry_direction == "long") or
+        (bias == "bearish" and entry_direction == "short")
+    )
+    if bias_aligned and is_win:
+        scores["directional_bias"] = 1.0
+    elif bias_aligned and not is_win:
+        scores["directional_bias"] = aligned_loss_score
+    elif not bias_aligned and is_win:
+        scores["directional_bias"] = 0.2
+    else:
+        scores["directional_bias"] = 0.0
+
+    # p3_phase
+    phase_aligned = (
+        (phase == "distribution" and entry_direction == "short") or
+        (phase == "accumulation" and entry_direction == "long") or
+        (phase == "manipulation")
+    )
+    if phase_aligned and is_win:
+        scores["p3_phase"] = 1.0
+    elif phase_aligned and not is_win:
+        scores["p3_phase"] = aligned_loss_score
+    elif phase == "manipulation":
+        scores["p3_phase"] = 0.5
+    elif not phase_aligned and is_win:
+        scores["p3_phase"] = 0.2
+    else:
+        scores["p3_phase"] = 0.0
+
+    # premium_discount
+    pd_aligned = (
+        (pd_zone == "premium" and entry_direction == "short") or
+        (pd_zone == "discount" and entry_direction == "long")
+    )
+    if pd_zone == "equilibrium":
+        scores["premium_discount"] = 0.5
+    elif pd_aligned and is_win:
+        scores["premium_discount"] = 1.0
+    elif pd_aligned and not is_win:
+        scores["premium_discount"] = aligned_loss_score
+    elif not pd_aligned and is_win:
+        scores["premium_discount"] = 0.2
+    else:
+        scores["premium_discount"] = 0.0
+
+    # confidence_calibration
+    if (conf == "high" and is_win) or (conf == "low" and not is_win):
+        scores["confidence_calibration"] = 1.0
+    elif conf == "medium":
+        scores["confidence_calibration"] = 0.5
+    elif conf == "high" and not is_win:
+        scores["confidence_calibration"] = 0.1
+    elif conf == "low" and is_win:
+        scores["confidence_calibration"] = 0.3
+    else:
+        scores["confidence_calibration"] = 0.5
+
+    # intermarket_synthesis
+    if intermarket:
+        try:
+            from ml.intermarket_validator import IntermarketValidator
+            cal_json = setup.get("calibration_json", {})
+            if isinstance(cal_json, str):
+                cal_json = json.loads(cal_json)
+            im_block = cal_json.get("intermarket", {})
+            scores["intermarket_synthesis"] = IntermarketValidator.score_intermarket_signal(
+                diverging=im_block.get("gold_dxy_diverging", 0),
+                is_win=is_win,
+                corr=im_block.get("gold_dxy_corr_20", 0),
+                yield_dir=im_block.get("yield_direction", 0),
+                direction=entry_direction,
+            )
+        except Exception:
+            scores["intermarket_synthesis"] = 0.5
+    else:
+        scores["intermarket_synthesis"] = 0.5
+
+    # key_levels
+    best_proximity = float('inf')
+    if entry_price and key_levels:
+        for level in key_levels:
+            price = level.get("price", 0) if isinstance(level, dict) else 0
+            if price and entry_price:
+                dist_pct = abs(price - entry_price) / entry_price
+                best_proximity = min(best_proximity, dist_pct)
+
+    if best_proximity <= 0.003 and is_win:
+        scores["key_levels"] = 1.0
+    elif best_proximity <= 0.003 and not is_win:
+        scores["key_levels"] = 0.4
+    elif best_proximity <= 0.01:
+        scores["key_levels"] = 0.3
+    else:
+        scores["key_levels"] = 0.2
+
+    return scores

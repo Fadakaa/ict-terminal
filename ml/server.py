@@ -1380,22 +1380,23 @@ def narrative_weights():
 
 @app.post("/narrative/weights/extract")
 def narrative_weights_extract():
-    """Trigger AG narrative weight extraction from the trained classifier (background)."""
+    """Compute narrative weights from actual trade outcomes (background).
+
+    Replaces tree-importance extraction with win-rate lift analysis:
+    measures P(win | field_aligned) - P(win | field_not_aligned) per field.
+    """
     import threading
 
     def _run():
         try:
-            _cfg = get_config()
-            from ml.training import extract_ag_weights
-            from ml.database import TradeLogger
-            db = TradeLogger(config=_cfg)
-            result = extract_ag_weights(model_dir=_cfg["model_dir"], db=db)
-            logger.info("AG weight extraction complete: %s", result)
+            from ml.training import compute_narrative_weights_from_outcomes
+            result = compute_narrative_weights_from_outcomes()
+            logger.info("Outcome-based narrative weight extraction complete: %s", result)
         except Exception as e:
-            logger.error("AG weight extraction failed: %s", e)
+            logger.error("Narrative weight extraction failed: %s", e, exc_info=True)
 
     threading.Thread(target=_run, daemon=True).start()
-    return {"status": "started", "message": "AG weight extraction running in background"}
+    return {"status": "started", "message": "Outcome-based narrative weight extraction running"}
 
 
 
