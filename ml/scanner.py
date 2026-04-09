@@ -1123,17 +1123,8 @@ class ScannerEngine:
             # Layer 2: Full entry alert if price is already at entry
             # Otherwise defer to proximity monitor (check_entry_proximity, 90s)
             if notify_quality and proximity_pct <= 0.003:
-                # Price already at entry — send full entry alert now
-                notify_new_setup({
-                    "direction": direction, "bias": analysis.get("bias", ""),
-                    "entry_price": entry_price, "sl_price": sl_price,
-                    "calibrated_sl": cal_sl, "tps": tps,
-                    "rr_ratios": rr_ratios, "setup_quality": analysis.get("setup_quality", ""),
-                    "killzone": analysis.get("killzone", ""), "timeframe": timeframe,
-                    "calibration_json": calibration or {},
-                    "opus_validated": analysis.get("opus_validated", False),
-                    "current_price": last_close,
-                }, is_prospected=bool(analysis.get("prospect_triggered")))
+                # Price already at entry — Stage 4 lifecycle is the single
+                # entry notification (notify_new_setup suppressed to dedup)
                 self.db.mark_notified(setup_id)
 
                 # Stage 4: ENTRY_READY lifecycle
@@ -1145,9 +1136,13 @@ class ScannerEngine:
                                          setup_data={"id": setup_id,
                                                       "entry_price": entry_price,
                                                       "sl_price": sl_price,
+                                                      "calibrated_sl": cal_sl,
                                                       "direction": direction,
                                                       "setup_quality": analysis.get("setup_quality", ""),
+                                                      "killzone": analysis.get("killzone", ""),
+                                                      "tps": tps,
                                                       "timeframe": timeframe},
+                                         calibration=calibration or {},
                                          db=self.db)
                 except Exception as e:
                     logger.debug("Lifecycle stage 4 failed: %s", e)
@@ -1276,21 +1271,8 @@ class ScannerEngine:
                     if setup.get(k):
                         tps.append(setup[k])
 
-                notify_new_setup({
-                    "direction": direction,
-                    "bias": setup.get("bias", ""),
-                    "entry_price": entry_price,
-                    "sl_price": setup.get("sl_price", 0),
-                    "calibrated_sl": setup.get("calibrated_sl"),
-                    "tps": tps,
-                    "rr_ratios": setup.get("rr_ratios", []),
-                    "setup_quality": setup.get("setup_quality", ""),
-                    "killzone": setup.get("killzone", ""),
-                    "timeframe": setup.get("timeframe", ""),
-                    "calibration_json": cal_json,
-                    "opus_validated": (setup.get("analysis_json") or {}).get("opus_validated", False),
-                    "current_price": current_price,
-                })
+                # Stage 4 lifecycle is the single entry notification
+                # (notify_new_setup suppressed to dedup)
                 self.db.mark_notified(setup["id"])
                 notified_count += 1
                 logger.info("Entry proximity: NOTIFIED %s %s @ %.2f (price %.2f, %.1f%% away)",
@@ -1302,7 +1284,8 @@ class ScannerEngine:
                     _thesis_id = setup.get("thesis_id")
                     if _thesis_id:
                         notify_lifecycle(4, _thesis_id, setup.get("timeframe", ""), {},
-                                        setup_data=setup, db=self.db)
+                                        setup_data=setup, calibration=cal_json,
+                                        db=self.db)
                 except Exception as e:
                     logger.debug("Lifecycle stage 4 (proximity) failed: %s", e)
 
