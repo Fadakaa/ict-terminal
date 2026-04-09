@@ -750,6 +750,149 @@ You respond ONLY with valid JSON. No explanation text outside the JSON."""
 OPUS_NARRATIVE_SYSTEM_RECAP = """You are a senior ICT analyst reviewing what happened during a trading session. Summarize the session objectively: what levels were tested, what structure formed, what the market was trying to do. Focus on facts from the trade data, not speculation about the next session."""
 
 
+def _build_field_coaching(ema_raw: dict | None, ag_weights: dict | None) -> list[str]:
+    """Build field-specific coaching lines from accuracy/impact analysis.
+
+    Each field gets actionable ICT methodology guidance based on its
+    accuracy (EMA) and impact (AG correlation) profile.
+    """
+    if not ema_raw or not ag_weights:
+        return []
+
+    coaching = []
+
+    # Field-specific improvement guidance keyed by accuracy profile
+    FIELD_COACHING = {
+        "premium_discount": {
+            "label": "Premium/Discount Zone",
+            "improve": (
+                "To improve: Compute the dealing range midpoint (equilibrium) from "
+                "the weekly and daily ranges BEFORE classifying. Price above the 50% "
+                "level = premium, below = discount. Don't guess from recent candle "
+                "direction — use the actual range boundaries from your dealing_range "
+                "output. When the weekly and daily ranges disagree, note which "
+                "timeframe's range you're using and why."
+            ),
+            "strong": (
+                "Your premium/discount reads are accurate and high-impact. "
+                "Continue using dealing range midpoints for classification."
+            ),
+        },
+        "directional_bias": {
+            "label": "Directional Bias",
+            "improve": (
+                "To improve: Anchor your bias in STRUCTURE, not recent candles. "
+                "Check: (1) has significant liquidity been swept (BSL sweep = bearish, "
+                "SSL sweep = bullish)? (2) Is there displacement — a strong move with "
+                "an FVG that broke structure? (3) Do the weekly, daily, and 4H biases "
+                "align? When they conflict, defer to the daily timeframe. If no clear "
+                "displacement or liquidity sweep exists, bias should be 'neutral' with "
+                "low confidence, not forced into bullish/bearish."
+            ),
+            "strong": (
+                "Your directional bias reads are reliable. Keep anchoring in "
+                "structure breaks and liquidity sweeps."
+            ),
+        },
+        "p3_phase": {
+            "label": "Power of 3 Phase",
+            "improve": (
+                "To improve: Identify the PRIOR completed P3 cycle before labeling the "
+                "current one. Look for: Accumulation = tight range / consolidation after "
+                "a move. Manipulation = false breakout / stop hunt beyond the range. "
+                "Distribution = the real move that follows manipulation. Key mistake to "
+                "avoid: calling 'distribution' when price is still ranging (that's "
+                "accumulation) or calling 'accumulation' during an active trend (that's "
+                "distribution). Check the daily candle bodies — are they getting smaller "
+                "(accumulation) or larger with clear direction (distribution)?"
+            ),
+            "strong": (
+                "Your P3 phase identification is working well. Continue reading "
+                "the prior cycle to anchor the current phase."
+            ),
+        },
+        "confidence_calibration": {
+            "label": "Confidence Calibration",
+            "improve": (
+                "To improve: Reserve 'high' confidence for when ALL of these align: "
+                "(1) weekly + daily + 4H bias agree, (2) recent liquidity sweep "
+                "confirms direction, (3) price is at a key OB/FVG level, (4) "
+                "intermarket supports the thesis. Use 'medium' when 2-3 align. Use "
+                "'low' when there's any structural conflict between timeframes or "
+                "when you're uncertain about the P3 phase. Being honestly uncertain "
+                "is better than false confidence — the system loses more from high-"
+                "confidence wrong calls than from cautious correct ones."
+            ),
+            "strong": (
+                "Your confidence calibration is well-tuned — high confidence calls "
+                "are winning and low confidence calls are correctly flagging risk."
+            ),
+        },
+        "intermarket_synthesis": {
+            "label": "Intermarket Synthesis",
+            "improve": (
+                "To improve: Focus on DXY-gold divergence as the primary signal. "
+                "When gold and DXY move in the same direction, something is wrong — "
+                "flag it. Check: (1) Is DXY at a key level that could reverse? "
+                "(2) Are yields supporting or contradicting the gold move? (3) Is "
+                "the gold-DXY 20-period correlation breaking down? When the "
+                "correlation is strongly negative (normal), intermarket is confirming. "
+                "When correlation flips positive or near zero, flag the divergence "
+                "explicitly and lower your bias_confidence."
+            ),
+            "strong": (
+                "Your intermarket reads are adding value. Continue focusing on "
+                "DXY-gold divergence as the key signal."
+            ),
+        },
+        "key_levels": {
+            "label": "Key Level Identification",
+            "improve": (
+                "To improve: Prioritize PROXIMITY over completeness. The most "
+                "valuable key levels are within 0.3% of current price — these are "
+                "the ones that will actually affect the next trade. For each level, "
+                "verify: (1) Is it an untested OB or unfilled FVG? Tested/filled "
+                "levels are less relevant. (2) Is it from a higher timeframe? Daily "
+                "and weekly levels matter more than 4H. (3) Does it align with a "
+                "liquidity pool (BSL/SSL)? Confluent levels are strongest. Don't "
+                "list 10 distant levels — identify the 2-3 nearest high-quality "
+                "levels that price is most likely to interact with this session."
+            ),
+            "strong": (
+                "Your key level identification is accurate. Continue prioritizing "
+                "nearby untested levels with higher-timeframe confluence."
+            ),
+        },
+    }
+
+    for field, guidance in FIELD_COACHING.items():
+        accuracy = ema_raw.get(field, 0.5)
+        impact = ag_weights.get(field, 0.5)
+
+        if accuracy < 0.40:
+            # Needs improvement — include impact context + specific guidance
+            impact_note = ""
+            if impact >= 0.6:
+                impact_note = (
+                    f" This field has HIGH IMPACT on win rate ({impact:.0%} "
+                    f"correlation) — improving here directly improves results."
+                )
+            elif impact < 0.3 and impact > 0:
+                impact_note = (
+                    f" This field has lower impact ({impact:.0%} correlation) "
+                    f"but still contributes to the overall read."
+                )
+            coaching.append(
+                f"- **{guidance['label']}** (accuracy: {accuracy:.0%}){impact_note}\n"
+                f"  {guidance['improve']}"
+            )
+        elif accuracy >= 0.55 and impact >= 0.5:
+            # Performing well — brief positive reinforcement
+            coaching.append(f"- {guidance['label']} (accuracy: {accuracy:.0%}): {guidance['strong']}")
+
+    return coaching
+
+
 def _build_narrative_feedback_block(feedback: dict | None) -> str:
     """Build the track record + gold examples block for the narrative prompt."""
     if not feedback:
@@ -757,7 +900,7 @@ def _build_narrative_feedback_block(feedback: dict | None) -> str:
 
     blocks = []
 
-    # Track record from blended weights + accuracy/impact gap analysis
+    # Track record from blended weights + field-specific coaching
     weights = feedback.get("weights", {})
     ag_weights = feedback.get("ag_weights")  # outcome-based impact scores
     ema_raw = feedback.get("ema_raw")  # raw EMA weights (accuracy)
@@ -772,7 +915,6 @@ def _build_narrative_feedback_block(feedback: dict | None) -> str:
         }
         # Only show fields with enough data
         lines = []
-        coaching_lines = []
         for field, label in field_labels.items():
             w = weights.get(field)
             if isinstance(w, dict):
@@ -784,22 +926,8 @@ def _build_narrative_feedback_block(feedback: dict | None) -> str:
             if total >= 5:
                 lines.append(f"- {label} accuracy: {pct * 100:.0f}% ({total} trades)")
 
-            # Detect accuracy/impact gaps (high impact but low accuracy = improvement opportunity)
-            if ag_weights and ema_raw:
-                impact = ag_weights.get(field, 0.5)
-                accuracy = ema_raw.get(field, 0.5)
-                if impact >= 0.7 and accuracy < 0.35:
-                    coaching_lines.append(
-                        f"- **{label}**: High impact ({impact:.0%} win correlation) but "
-                        f"low accuracy ({accuracy:.0%}). When you get this right it "
-                        f"strongly predicts winning — invest more effort here. Study the "
-                        f"price structure carefully before committing."
-                    )
-                elif impact >= 0.7 and accuracy >= 0.5:
-                    coaching_lines.append(
-                        f"- {label}: Strong performer — both accurate ({accuracy:.0%}) and "
-                        f"impactful ({impact:.0%}). Trust your reads here."
-                    )
+        # Build field-specific coaching from accuracy/impact analysis
+        coaching_lines = _build_field_coaching(ema_raw, ag_weights)
 
         if lines:
             # Determine emphasis from bandit params if available
