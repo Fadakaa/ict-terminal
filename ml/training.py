@@ -627,11 +627,14 @@ def compute_narrative_weights_from_outcomes(db=None) -> dict:
     """Compute narrative field weights from actual trade outcomes.
 
     For each resolved trade with an Opus narrative, score each field's
-    correctness (reusing ClaudeAnalysisBridge's logic), then compute
-    win-rate lift: P(win | field_aligned) - P(win | field_not_aligned).
+    correctness (reusing ClaudeAnalysisBridge's scoring logic), then
+    compute point-biserial correlation between the field score and the
+    win outcome.
 
-    This measures how much *trusting* each narrative field actually
-    predicts winning, segmented by killzone.
+    This measures how much each narrative field's score actually predicts
+    winning — fields with higher correlation are more trustworthy.
+    Unlike binary aligned/not-aligned, correlation handles continuous
+    score distributions (key_levels 0.2-1.0, intermarket 0.0-1.0, etc.).
 
     Returns:
         Segmented weights dict {"_global": {...}, "Asian": {...}, ...}
@@ -686,24 +689,41 @@ def compute_narrative_weights_from_outcomes(db=None) -> dict:
 
     logger.info("outcome weights: analyzing %d trades", len(records))
 
-    # Compute win-rate lift per field, per group
+    # Compute point-biserial correlation between field score and win outcome.
+    # Unlike binary aligned/not-aligned, this handles continuous score
+    # distributions (key_levels 0.2-1.0, intermarket 0.0-1.0, etc.)
     FIELDS = list(bridge.NARRATIVE_FIELDS)
-    ALIGNED_THRESHOLD = 0.6  # score >= this = "field was aligned/correct"
 
-    def _compute_lift(subset: list) -> dict:
-        """Win-rate lift for each field in a subset of records."""
+    def _compute_field_correlations(subset: list) -> dict:
+        """Point-biserial correlation between field score and win for each field.
+
+        Returns dict {field: correlation} where correlation is 0.0-1.0.
+        Higher = field score is more predictive of winning.
+        """
         weights = {}
-        base_wr = sum(1 for r in subset if r["_win"]) / len(subset) if subset else 0.5
+        n = len(subset)
         for field in FIELDS:
-            aligned = [r for r in subset if r.get(field, 0.5) >= ALIGNED_THRESHOLD]
-            misaligned = [r for r in subset if r.get(field, 0.5) < ALIGNED_THRESHOLD]
-            if len(aligned) >= 3 and len(misaligned) >= 3:
-                wr_aligned = sum(1 for r in aligned if r["_win"]) / len(aligned)
-                wr_misaligned = sum(1 for r in misaligned if r["_win"]) / len(misaligned)
-                lift = wr_aligned - wr_misaligned  # range: -1.0 to 1.0
-                weights[field] = max(0.0, lift)  # only positive lift = useful field
+            scores = [r.get(field, 0.5) for r in subset]
+            wins = [1.0 if r["_win"] else 0.0 for r in subset]
+
+            # Need variance in both score and outcome
+            score_set = set(scores)
+            win_set = set(wins)
+            if len(score_set) < 2 or len(win_set) < 2:
+                weights[field] = None
+                continue
+
+            # Point-biserial correlation (Pearson between continuous and binary)
+            mean_s = sum(scores) / n
+            mean_w = sum(wins) / n
+            cov = sum((s - mean_s) * (w - mean_w) for s, w in zip(scores, wins)) / n
+            std_s = (sum((s - mean_s) ** 2 for s in scores) / n) ** 0.5
+            std_w = (sum((w - mean_w) ** 2 for w in wins) / n) ** 0.5
+            if std_s > 0 and std_w > 0:
+                corr = cov / (std_s * std_w)  # range -1 to 1
+                weights[field] = max(0.0, corr)  # only positive = higher score → more wins
             else:
-                weights[field] = None  # insufficient data
+                weights[field] = None
         return weights
 
     def _normalize(raw: dict) -> dict:
@@ -713,16 +733,16 @@ def compute_narrative_weights_from_outcomes(db=None) -> dict:
             return {}
         max_v = max(valid.values()) if valid else 1
         if max_v <= 0:
-            return {k: 0.5 for k in valid}  # no field has positive lift
+            return {k: 0.5 for k in valid}  # no field has positive correlation
         return {
             k: round(max(0.05, v / max_v), 4) if v > 0 else 0.0
             for k, v in valid.items()
         }
 
     # Global
-    result = {"_global": _normalize(_compute_lift(records))}
-    raw_global = _compute_lift(records)
-    logger.info("outcome weights global (raw lift): %s",
+    raw_global = _compute_field_correlations(records)
+    result = {"_global": _normalize(raw_global)}
+    logger.info("outcome weights global (raw correlation): %s",
                 {k: round(v, 4) if v is not None else None for k, v in raw_global.items()})
 
     # Per-killzone
@@ -730,7 +750,7 @@ def compute_narrative_weights_from_outcomes(db=None) -> dict:
     for kz in KILLZONE_KEYS:
         subset = [r for r in records if r["_kz"] == kz]
         if len(subset) >= min_kz:
-            result[kz] = _normalize(_compute_lift(subset))
+            result[kz] = _normalize(_compute_field_correlations(subset))
             logger.info("outcome weights %s: %d trades", kz, len(subset))
 
     # Write
