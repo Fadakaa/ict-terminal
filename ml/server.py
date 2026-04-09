@@ -1381,26 +1381,34 @@ def narrative_weights():
 @app.post("/narrative/weights/extract")
 def narrative_weights_extract():
     """Manually trigger AG narrative weight extraction from the trained classifier."""
-    cfg = get_config()
-    from ml.training import extract_ag_weights
-    from ml.scanner_db import TradeLogger
-    db = TradeLogger(config=cfg)
-    result = extract_ag_weights(model_dir=cfg["model_dir"], db=db)
-    if result:
-        return {"status": "ok", "weights": result}
-    return {"status": "error", "message": "No classifier found or extraction failed"}
+    try:
+        cfg = get_config()
+        from ml.training import extract_ag_weights
+        from ml.scanner_db import TradeLogger
+        db = TradeLogger(config=cfg)
+        result = extract_ag_weights(model_dir=cfg["model_dir"], db=db)
+        if result:
+            return {"status": "ok", "weights": result}
+        return {"status": "error", "message": "No classifier found or extraction failed"}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.post("/narrative/weights/backfill-killzones")
 def narrative_weights_backfill():
     """Replay resolved trades to warm up per-killzone EMA weight buckets."""
-    cfg = get_config()
-    from ml.claude_bridge import ClaudeAnalysisBridge
-    from ml.scanner_db import TradeLogger
-    bridge = ClaudeAnalysisBridge()
-    db = TradeLogger(config=cfg)
-    result = bridge.backfill_killzone_weights(db)
-    return result
+    try:
+        cfg = get_config()
+        from ml.claude_bridge import ClaudeAnalysisBridge
+        from ml.scanner_db import TradeLogger
+        bridge = ClaudeAnalysisBridge()
+        db = TradeLogger(config=cfg)
+        result = bridge.backfill_killzone_weights(db)
+        return result
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.get("/narrative/examples")
