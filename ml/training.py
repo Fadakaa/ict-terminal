@@ -434,16 +434,25 @@ def _importance_to_narrative(imp: dict) -> dict:
 def _get_feature_importance(predictor, test_data=None) -> dict:
     """Extract feature importance dict from a predictor, with fallbacks."""
     try:
+        if test_data is not None:
+            logger.info("feature_importance: test_data shape=%s, cols=%s, label=%s",
+                        test_data.shape, list(test_data.columns)[:5],
+                        predictor.label)
         imp_df = predictor.feature_importance(data=test_data, silent=True)
         imp = imp_df["importance"].to_dict() if "importance" in imp_df.columns else {}
         if imp:
+            logger.info("feature_importance: got %d features, sample: %s",
+                        len(imp), dict(list(imp.items())[:3]))
             return imp
-    except Exception:
-        pass
+        logger.warning("feature_importance: empty result, columns=%s",
+                       list(imp_df.columns) if imp_df is not None else None)
+    except Exception as e:
+        logger.error("feature_importance failed: %s", e, exc_info=True)
 
     # Fallback: uniform importance
     try:
         feat_names = predictor.feature_metadata_in.get_features()
+        logger.warning("feature_importance: using uniform fallback for %d features", len(feat_names))
         return {f: 1.0 / len(feat_names) for f in feat_names}
     except Exception:
         return {}
@@ -549,16 +558,21 @@ def extract_ag_weights(model_dir: str = None, db=None) -> dict:
             from ml.database import TradeLogger
             db = TradeLogger(config=cfg)
         df = db.get_training_data()
+        logger.info("AG extraction: loaded %d rows, columns: %s",
+                    len(df), [c for c in df.columns if c in FEATURE_TO_NARRATIVE or c == "actual_result"][:10])
         if len(df) >= 10:
             binary_label = "__binary_outcome"
             label = "actual_result"
             df[binary_label] = df[label].isin(WIN_OUTCOMES).map(
                 {True: "win", False: "loss"})
+            label_dist = df[binary_label].value_counts().to_dict()
+            logger.info("AG extraction: binary label distribution: %s", label_dist)
             keep_cols = [c for c in df.columns
                          if c in INFERENCE_FEATURES or c == binary_label]
             test_data = df[keep_cols]
+            logger.info("AG extraction: test_data shape=%s", test_data.shape)
     except Exception as e:
-        logger.warning("Could not load test data for AG extraction: %s", e)
+        logger.warning("Could not load test data for AG extraction: %s", e, exc_info=True)
 
     result = _extract_narrative_feature_importance(model_dir, classifier_path,
                                                    test_data=test_data)
