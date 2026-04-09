@@ -4072,7 +4072,10 @@ class ScannerEngine:
 
             # Priority 8: Cost-per-winner tracking
             try:
-                self._cpw_tracker.ingest_trade(setup)
+                setup_with_outcome = dict(setup)
+                setup_with_outcome["outcome"] = result["outcome"]
+                setup_with_outcome["pnl_rr"] = result.get("rr", 0)
+                self._cpw_tracker.ingest_trade(setup_with_outcome)
             except Exception as e:
                 logger.debug("Cost-per-winner ingestion failed: %s", e)
 
