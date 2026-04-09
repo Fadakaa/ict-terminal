@@ -4206,7 +4206,7 @@ class ScannerEngine:
                 weaknesses_before = prev.get("weaknesses", [])
 
             # Retrain
-            train_result = train_classifier(db, dataset_manager=dm)
+            train_result = train_classifier(db, dataset_manager=dm, live_only=True)
             print(f"[RETRAIN] Training complete: {train_result.get('status')}, "
                   f"OOS={train_result.get('oos_accuracy', 0):.1%}")
 
@@ -4214,6 +4214,27 @@ class ScannerEngine:
             eval_result = evaluate_classifier_walkforward(dm)
             oos_after = eval_result.get("oos_accuracy", 0)
             weaknesses_after = eval_result.get("weaknesses", [])
+
+            # ── Accuracy gate: reject models below 55% OOS ──
+            min_oos = 0.55
+            if oos_after < min_oos:
+                print(f"[RETRAIN] REJECTED: OOS {oos_after:.1%} below {min_oos:.0%} gate")
+                import shutil
+                for subdir in ("classifier_binary", "classifier"):
+                    p = os.path.join(cfg["model_dir"], subdir)
+                    if os.path.exists(p):
+                        shutil.rmtree(p)
+                return
+
+            # Reject if regression from a good model
+            if oos_before >= min_oos and oos_after < oos_before:
+                print(f"[RETRAIN] REJECTED: OOS regressed {oos_before:.1%} -> {oos_after:.1%}")
+                import shutil
+                for subdir in ("classifier_binary", "classifier"):
+                    p = os.path.join(cfg["model_dir"], subdir)
+                    if os.path.exists(p):
+                        shutil.rmtree(p)
+                return
 
             # Feature quality
             full_pct = 1 - eval_result.get("feature_quality", {}).get("minimal_feature_pct", 1.0)
