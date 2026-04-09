@@ -1461,19 +1461,16 @@ def narrative_weights_extract_debug():
         diag["missing_from_test"] = list(pred_feats - test_feats)[:10]
         diag["extra_in_test"] = list(test_feats - pred_feats)[:10]
 
-        # Try feature importance (limited to avoid timeout)
+        # Skip permutation importance (too slow for Railway timeout)
+        # Instead, try to get model-native feature importances
         try:
-            sample = test_data.sample(n=min(50, len(test_data)), random_state=42)
-            imp_df = predictor.feature_importance(
-                data=sample, subsample_size=50, num_shuffle_sets=2, silent=True)
-            diag["imp_df_shape"] = list(imp_df.shape)
-            diag["imp_df_columns"] = list(imp_df.columns)
-            imp = imp_df["importance"].to_dict() if "importance" in imp_df.columns else {}
-            diag["importance_sample"] = dict(list(imp.items())[:5])
-            diag["importance_nonzero"] = sum(1 for v in imp.values() if v != 0)
+            model_name = predictor.model_best
+            diag["best_model"] = model_name
+            # Try to get importance from leaderboard info
+            lb = predictor.leaderboard(silent=True)
+            diag["leaderboard_models"] = list(lb["model"].values) if "model" in lb.columns else []
         except Exception as e:
-            diag["feature_importance_error"] = str(e)
-            diag["feature_importance_traceback"] = traceback.format_exc()[-500:]
+            diag["leaderboard_error"] = str(e)
 
         return {"status": "ok", "diag": diag}
     except Exception as e:
