@@ -1346,47 +1346,55 @@ async def backfill_features():
 @app.get("/narrative/weights")
 def narrative_weights():
     """Return current narrative EMA weights + AG override if active."""
-    from ml.claude_bridge import ClaudeAnalysisBridge
-    from ml.prompts import get_current_killzone
-    bridge = ClaudeAnalysisBridge()
-    current_kz = get_current_killzone()
-    ema_weights = bridge.get_narrative_weights(killzone=current_kz)
+    try:
+        from ml.claude_bridge import ClaudeAnalysisBridge
+        from ml.prompts import get_current_killzone
+        bridge = ClaudeAnalysisBridge()
+        current_kz = get_current_killzone()
+        ema_weights = bridge.get_narrative_weights(killzone=current_kz)
 
-    ag_weights = None
-    ag_path = os.path.join(cfg["model_dir"], "narrative_weights_ag.json")
-    if os.path.exists(ag_path):
-        try:
-            with open(ag_path) as f:
-                ag_weights = json.load(f)
-        except Exception:
-            pass
+        ag_weights = None
+        ag_path = os.path.join(cfg["model_dir"], "narrative_weights_ag.json")
+        if os.path.exists(ag_path):
+            try:
+                with open(ag_path) as f:
+                    ag_weights = json.load(f)
+            except Exception:
+                pass
 
-    # Flatten all killzone weights for the response
-    all_kz = {}
-    for key, bucket in bridge._narrative_weights.items():
-        if isinstance(bucket, dict):
-            all_kz[key] = {k: v.get("weight", 0.5) if isinstance(v, dict) else v
-                           for k, v in bucket.items()}
+        # Flatten all killzone weights for the response
+        all_kz = {}
+        for key, bucket in bridge._narrative_weights.items():
+            if isinstance(bucket, dict):
+                all_kz[key] = {k: v.get("weight", 0.5) if isinstance(v, dict) else v
+                               for k, v in bucket.items()}
 
-    return {
-        "ema_weights": ema_weights,
-        "ema_all_killzones": all_kz,
-        "ag_weights": ag_weights,
-        "current_killzone": current_kz,
-        "active_source": "autogluon" if ag_weights and ag_weights.get("_global") else "ema",
-    }
+        return {
+            "ema_weights": ema_weights,
+            "ema_all_killzones": all_kz,
+            "ag_weights": ag_weights,
+            "current_killzone": current_kz,
+            "active_source": "autogluon" if ag_weights and ag_weights.get("_global") else "ema",
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.post("/narrative/weights/extract")
 def narrative_weights_extract():
     """Manually trigger AG narrative weight extraction from the trained classifier."""
-    from ml.training import extract_ag_weights
-    from ml.scanner_db import TradeLogger
-    db = TradeLogger(config=cfg)
-    result = extract_ag_weights(model_dir=cfg["model_dir"], db=db)
-    if result:
-        return {"status": "ok", "weights": result}
-    return {"status": "error", "message": "No classifier found or extraction failed"}
+    try:
+        from ml.training import extract_ag_weights
+        from ml.scanner_db import TradeLogger
+        db = TradeLogger(config=cfg)
+        result = extract_ag_weights(model_dir=cfg["model_dir"], db=db)
+        if result:
+            return {"status": "ok", "weights": result}
+        return {"status": "error", "message": "No classifier found or extraction failed"}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.post("/narrative/weights/backfill-killzones")
