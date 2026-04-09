@@ -4055,8 +4055,8 @@ class ScannerEngine:
                     _thesis_id = "r-" + hashlib.md5(_fb_src.encode()).hexdigest()[:6]
                     logger.info("Stage 5 fallback thesis_id: %s (setup %s)", _thesis_id, setup.get("id"))
                 notify_lifecycle(5, _thesis_id, setup.get("timeframe", ""), {},
-                                setup_data={**setup, "outcome": result["outcome"],
-                                            "rr": result.get("rr", 0)},
+                                setup_data=setup,
+                                resolution_data=result,
                                 db=self.db)
             except Exception as e:
                 logger.warning("Lifecycle stage 5 failed: %s", e)

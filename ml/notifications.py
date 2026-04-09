@@ -813,7 +813,7 @@ def _build_stage_5(emoji, tf, setup_data, resolution_data, post_thesis):
     """Stage 5: TRADE RESOLVED"""
     d = setup_data or {}
     r = resolution_data or {}
-    outcome = r.get("outcome", "?")
+    outcome = r.get("outcome") or d.get("outcome", "?")
     emoji_outcome = {"tp1": "✅", "tp2": "✅✅", "tp3": "✅✅✅",
                      "stopped_out": "❌", "expired": "⏰"}.get(outcome, "📊")
 
@@ -821,7 +821,7 @@ def _build_stage_5(emoji, tf, setup_data, resolution_data, post_thesis):
     exit_price = r.get("price", 0)
     gross_rr = r.get("gross_rr", 0)
     cost_rr = r.get("cost_rr", 0)
-    net_rr = r.get("rr", 0)
+    net_rr = r.get("rr") or d.get("rr", 0)
     direction = (d.get("direction") or "?").upper()
 
     title = f"{emoji_outcome} {outcome.upper().replace('_', ' ')} [{tf}] {direction}"
