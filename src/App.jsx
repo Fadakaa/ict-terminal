@@ -854,9 +854,10 @@ export default function App() {
     return () => clearInterval(id);
   }, [liveMode, refreshInterval, screen, isDemo, fetchCandles, runAnalysis, autoAnalyze]);
 
-  // Poll scanner + ML stats every 2 min so LOG/INTEL tabs stay current
+  // Poll ALL tab data every 60s so ML/Bayes/Session/Accuracy tabs stay current.
+  // Runs on both "live" and "setup" screens (not demo mode).
   useEffect(() => {
-    if (screen !== "live" || isDemo) return;
+    if (isDemo) return;
     const id = setInterval(() => {
       // Fetch real Bayesian stats from scanner DB (replaces /api/ml/beliefs + drift)
       fetch("/api/bayesian").then(r => r.ok ? r.json() : null).then(data => {
@@ -873,10 +874,16 @@ export default function App() {
         fetch("/api/ml/claude/accuracy").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/calibration/value").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/model/info").then(r => r.ok ? r.json() : null),
+        fetch("/api/ml/evaluation/dual").then(r => r.ok ? r.json() : null),
+        fetch("/api/ml/dataset/stats").then(r => r.ok ? r.json() : null),
+        fetch("/api/ml/cost/budget").then(r => r.ok ? r.json() : null),
+        fetch("/api/ml/scanner/prospects").then(r => r.ok ? r.json() : null),
+        fetch("/api/ml/killzone/gates").then(r => r.ok ? r.json() : null),
         fetch(`/api/ml/narrative/thesis/current?timeframe=${timeframe}`).then(r => r.ok ? r.json() : null),
+        fetch("/api/ml/narrative/thesis/accuracy").then(r => r.ok ? r.json() : null),
         fetch("/api/ml/lifecycle/recent?limit=30").then(r => r.ok ? r.json() : null),
         fetch(`/api/ml/context/recent?timeframe=${timeframe}`).then(r => r.ok ? r.json() : null),
-      ]).then(([p, h, s, pnl, acc, calVal, mi, thesis, lc, rctx]) => {
+      ]).then(([p, h, s, pnl, acc, calVal, mi, evalD, ds, cb, prosp, kzg, thesis, thAcc, lc, rctx]) => {
         if (p.status === "fulfilled" && p.value) setScannerSetups(p.value);
         if (h.status === "fulfilled" && h.value) setScannerHistory(h.value);
         if (s.status === "fulfilled" && s.value) setScannerStatus(s.value);
@@ -884,13 +891,19 @@ export default function App() {
         if (acc.status === "fulfilled" && acc.value) setAccuracy(acc.value);
         if (calVal.status === "fulfilled" && calVal.value) setCalibrationValue(calVal.value);
         if (mi.status === "fulfilled" && mi.value) setModelInfo(mi.value);
+        if (evalD.status === "fulfilled" && evalD.value) setEvalDual(evalD.value);
+        if (ds.status === "fulfilled" && ds.value) setDatasetStats(ds.value);
+        if (cb.status === "fulfilled" && cb.value) setCostBudget(cb.value);
+        if (prosp.status === "fulfilled" && prosp.value) setProspects(prosp.value);
+        if (kzg.status === "fulfilled" && kzg.value) setKillzoneGates(kzg.value);
         if (thesis.status === "fulfilled" && thesis.value) setCurrentThesis(thesis.value);
+        if (thAcc.status === "fulfilled" && thAcc.value) setThesisAccuracy(thAcc.value);
         if (lc.status === "fulfilled" && lc.value) setLifecycleRecent(lc.value);
         if (rctx.status === "fulfilled" && rctx.value) setRecentContext(rctx.value);
       });
-    }, 120000);
+    }, 60000);
     return () => clearInterval(id);
-  }, [screen, isDemo, timeframe]);
+  }, [isDemo, timeframe]);
 
   // Auto re-fetch on timeframe switch
   useEffect(() => {
