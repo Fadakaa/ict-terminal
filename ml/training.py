@@ -727,17 +727,25 @@ def compute_narrative_weights_from_outcomes(db=None) -> dict:
         return weights
 
     def _normalize(raw: dict) -> dict:
-        """Normalize to 0-1 range, using 0.05 floor for non-zero values."""
+        """Normalize to 0-1 range, defaulting to 0.5 for unmeasurable fields.
+
+        Fields with None (insufficient variance) get 0.5 (neutral trust)
+        rather than being omitted — the scanner expects all 6 fields.
+        """
         valid = {k: v for k, v in raw.items() if v is not None}
-        if not valid:
-            return {}
-        max_v = max(valid.values()) if valid else 1
-        if max_v <= 0:
-            return {k: 0.5 for k in valid}  # no field has positive correlation
-        return {
-            k: round(max(0.05, v / max_v), 4) if v > 0 else 0.0
-            for k, v in valid.items()
-        }
+        max_v = max(valid.values()) if valid else 0
+        result = {}
+        for field in FIELDS:
+            v = raw.get(field)
+            if v is None:
+                result[field] = 0.5  # neutral — not enough data to judge
+            elif max_v <= 0:
+                result[field] = 0.5
+            elif v > 0:
+                result[field] = round(max(0.05, v / max_v), 4)
+            else:
+                result[field] = 0.0
+        return result
 
     # Global
     raw_global = _compute_field_correlations(records)
