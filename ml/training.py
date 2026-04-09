@@ -92,7 +92,8 @@ def is_multi3_active(config: dict = None) -> bool:
     return False
 
 
-def train_classifier(db, config: dict = None, dataset_manager=None) -> dict:
+def train_classifier(db, config: dict = None, dataset_manager=None,
+                     live_only=False) -> dict:
     """Train AutoGluon classifier on completed trades.
 
     Args:
@@ -106,7 +107,7 @@ def train_classifier(db, config: dict = None, dataset_manager=None) -> dict:
 
     # Get training data from dataset manager (blended WFO+live) or raw DB
     if dataset_manager is not None:
-        df = dataset_manager.get_blended_dataset()
+        df = dataset_manager.get_blended_dataset(live_only=live_only)
         label = "outcome"
     else:
         df = db.get_training_data()

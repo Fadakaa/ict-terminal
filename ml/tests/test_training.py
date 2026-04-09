@@ -263,3 +263,21 @@ class TestTrainWithDatasetManager:
         result = train_classifier(db, config=cfg, dataset_manager=dm)
         assert result["status"] == "insufficient_data"
         assert result["samples"] == 5
+
+
+def test_train_classifier_live_only_passes_through(monkeypatch):
+    """live_only=True should be forwarded to dataset_manager.get_blended_dataset()."""
+    captured = {}
+
+    class MockDM:
+        def get_blended_dataset(self, live_only=False):
+            captured["live_only"] = live_only
+            import pandas as pd
+            return pd.DataFrame()  # empty triggers insufficient_data
+
+    from ml import training
+    result = training.train_classifier(
+        db=None, dataset_manager=MockDM(), live_only=True
+    )
+    assert captured["live_only"] is True
+    assert result["status"] == "insufficient_data"
