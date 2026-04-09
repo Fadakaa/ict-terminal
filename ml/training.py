@@ -412,7 +412,11 @@ _KZ_ENCODED_TO_NAME = {1: "London", 2: "NY", 3: "Asian"}
 
 
 def _importance_to_narrative(imp: dict) -> dict:
-    """Map raw feature importances to narrative field weights, normalized 0-1."""
+    """Map raw feature importances to narrative field weights, normalized 0-1.
+
+    Uses min-max normalization with a floor of 0.05 so that features with
+    real but small signal are not squished to exactly 0.
+    """
     narrative_scores: dict[str, list[float]] = {}
     for feat, narrative_field in FEATURE_TO_NARRATIVE.items():
         if feat in imp:
@@ -425,60 +429,69 @@ def _importance_to_narrative(imp: dict) -> dict:
     if narrative_weights:
         max_w = max(narrative_weights.values())
         if max_w > 0:
-            narrative_weights = {k: round(v / max_w, 4)
-                                 for k, v in narrative_weights.items()}
+            narrative_weights = {
+                k: round(max(0.05, v / max_w), 4) if v > 0 else 0.0
+                for k, v in narrative_weights.items()
+            }
 
     return narrative_weights
 
 
 def _get_feature_importance(predictor, test_data=None) -> dict:
-    """Extract feature importance from a predictor, preferring fast methods."""
-    # Method 1: Try model-native importance (no computation needed, instant)
-    try:
-        model_name = predictor.model_best
-        trainer = predictor._trainer
-        model_obj = trainer.load_model(model_name)
-        # Tree-based models (LightGBM, XGBoost, RF, etc.) expose .feature_importances_
-        inner = getattr(model_obj, "model", None)
-        fi = getattr(inner, "feature_importances_", None)
-        if fi is not None:
-            feat_names = predictor.feature_metadata_in.get_features()
-            if len(fi) == len(feat_names):
-                imp = dict(zip(feat_names, fi))
-                logger.info("feature_importance: got native importances from %s, "
-                            "sample: %s", model_name, dict(list(imp.items())[:3]))
-                return imp
-    except Exception as e:
-        logger.info("Native importance extraction failed for %s: %s",
-                    getattr(predictor, "model_best", "?"), e)
+    """Extract feature importance from a predictor, preferring fast methods.
 
-    # Method 2: Permutation importance (slower, needs test data)
+    Tries (in order):
+    1. Average native importances across all tree models in the ensemble
+    2. Permutation importance (slower, needs test data)
+    3. Uniform fallback
+    """
+    import numpy as np
+    feat_names = predictor.feature_metadata_in.get_features()
+
+    # Method 1: Average native importances across ensemble's tree models
+    try:
+        trainer = predictor._trainer
+        all_models = trainer.get_model_names()
+        collected = []
+        for name in all_models:
+            try:
+                model_obj = trainer.load_model(name)
+                inner = getattr(model_obj, "model", None)
+                fi = getattr(inner, "feature_importances_", None)
+                if fi is not None and len(fi) == len(feat_names):
+                    collected.append(np.array(fi, dtype=float))
+            except Exception:
+                continue
+        if collected:
+            avg_fi = np.mean(collected, axis=0)
+            imp = dict(zip(feat_names, avg_fi.tolist()))
+            logger.info("feature_importance: averaged native importances from "
+                        "%d tree models", len(collected))
+            return imp
+    except Exception as e:
+        logger.info("Native importance extraction failed: %s", e)
+
+    # Method 2: Permutation importance (needs test data, use more shuffles for stability)
     if test_data is not None:
         try:
-            sample_n = min(80, len(test_data))
-            logger.info("feature_importance: running permutation on %d rows "
-                        "(from %d), label=%s", sample_n, len(test_data),
-                        predictor.label)
+            sample_n = min(200, len(test_data))
+            logger.info("feature_importance: running permutation on %d rows, label=%s",
+                        sample_n, predictor.label)
             imp_df = predictor.feature_importance(
                 data=test_data, subsample_size=sample_n,
-                num_shuffle_sets=2, silent=True)
+                num_shuffle_sets=5, silent=True)
             imp = imp_df["importance"].to_dict() if "importance" in imp_df.columns else {}
             if imp:
-                logger.info("feature_importance: permutation got %d features, "
-                            "sample: %s", len(imp), dict(list(imp.items())[:3]))
+                logger.info("feature_importance: permutation got %d features",
+                            len(imp))
                 return imp
-            logger.warning("feature_importance: empty permutation result")
         except Exception as e:
             logger.error("feature_importance permutation failed: %s", e)
 
     # Fallback: uniform importance
-    try:
-        feat_names = predictor.feature_metadata_in.get_features()
-        logger.warning("feature_importance: using uniform fallback for %d features",
-                       len(feat_names))
-        return {f: 1.0 / len(feat_names) for f in feat_names}
-    except Exception:
-        return {}
+    logger.warning("feature_importance: using uniform fallback for %d features",
+                   len(feat_names))
+    return {f: 1.0 / len(feat_names) for f in feat_names}
 
 
 def _extract_narrative_feature_importance(model_dir: str, classifier_path: str,
