@@ -229,8 +229,14 @@ app.all("/api/ml/*", async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: ["POST", "PUT", "PATCH"].includes(req.method) ? JSON.stringify(req.body) : undefined,
     });
-    const data = await response.json();
-    res.status(response.status).json(data);
+    const text = await response.text();
+    try {
+      const data = JSON.parse(text);
+      res.status(response.status).json(data);
+    } catch {
+      // FastAPI returned non-JSON (e.g. "Internal Server Error")
+      res.status(response.status).json({ error: { message: text || "Unknown ML server error" } });
+    }
   } catch (e) {
     res.status(502).json({ error: { message: "ML server unavailable: " + e.message } });
   }

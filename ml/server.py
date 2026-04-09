@@ -1027,6 +1027,7 @@ def sl_floor_info():
 @app.get("/cost/today")
 def cost_today():
     """Current day's API spend by model and purpose."""
+    cfg = get_config()
     from ml.cost_tracker import get_cost_tracker
     tracker = get_cost_tracker()
     summary = tracker.get_daily_summary()
@@ -1046,6 +1047,7 @@ def cost_history():
 @app.get("/cost/budget")
 def cost_budget():
     """Budget status — remaining, projected, limit."""
+    cfg = get_config()
     from ml.cost_tracker import get_cost_tracker
     tracker = get_cost_tracker()
     summary = tracker.get_daily_summary()
@@ -1280,6 +1282,7 @@ async def backtest_generate(request: Request):
 @app.get("/backtest/status")
 def backtest_status():
     """Return backtest generation progress from checkpoint."""
+    cfg = get_config()
     checkpoint_path = os.path.join(cfg["model_dir"], "backtest_checkpoint.json")
     if not os.path.exists(checkpoint_path):
         return {"status": "not_started"}
@@ -1301,6 +1304,7 @@ def backtest_status():
 @app.get("/backtest/meta")
 def backtest_meta():
     """Return backtest fidelity metadata."""
+    cfg = get_config()
     meta_path = os.path.join(cfg["model_dir"], "backtest_meta.json")
     if not os.path.exists(meta_path):
         from fastapi.responses import JSONResponse
