@@ -65,11 +65,12 @@ FEATURE_COLUMNS = [
     "dealing_range_position",     # 0.0=range low, 1.0=range high (price within HTF range)
     "htf_structure_alignment",    # 1=HTF+LTF agree, 0=neutral, -1=conflict
     "htf_displacement_quality",   # 1=strong displacement formed OB, 0=weak/none
-    # Narrative state (4) — thesis maturity + conviction
+    # Narrative state (5) — thesis maturity + conviction + quality
     "thesis_confidence",          # 0.0-1.0 bias_confidence from narrative state
     "p3_progress_encoded",        # early=1, mid=2, late=3, none=0
     "thesis_scan_count",          # how many scans this thesis has survived
     "opus_sonnet_agreement",      # 1=agree on direction, 0=disagree or no Opus
+    "narrative_quality_score",    # 0.0-1.0 weighted avg of field accuracies (from EMA weights)
     # Key level proximity (6) — ATR-normalised distance to ICT levels
     "price_vs_pdh_atr",           # (price - PDH) / ATR; positive = above PDH
     "price_vs_pdl_atr",           # (price - PDL) / ATR; positive = above PDL

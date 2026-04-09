@@ -187,6 +187,37 @@ def train_classifier(db, config: dict = None, dataset_manager=None,
         except Exception as e:
             logger.warning("Could not apply weakness boosts: %s", e)
 
+    # --- Scale narrative-derived features by EMA accuracy ---
+    # Features from Claude's narrative (premium_discount_encoded, p3_phase_encoded, etc.)
+    # are noisy when the narrative field's accuracy is low. Multiply these features
+    # by their EMA accuracy weight so AutoGluon trusts them proportionally.
+    NARRATIVE_FEATURE_TO_WEIGHT = {
+        "premium_discount_encoded": "premium_discount",
+        "p3_phase_encoded": "p3_phase",
+        "claude_direction_encoded": "directional_bias",
+        "setup_quality_encoded": "confidence_calibration",
+        "htf_bias_encoded": "directional_bias",
+        "htf_structure_alignment": "directional_bias",
+        "thesis_confidence": "confidence_calibration",
+    }
+    try:
+        from ml.claude_bridge import ClaudeAnalysisBridge
+        bridge = ClaudeAnalysisBridge()
+        nw = bridge.get_narrative_weights()  # global weights
+        scaled_count = 0
+        for feat_col, weight_field in NARRATIVE_FEATURE_TO_WEIGHT.items():
+            if feat_col in train_df.columns:
+                accuracy = nw.get(weight_field, 0.5)
+                if accuracy < 0.45:  # only scale down unreliable fields
+                    # Scale factor: accuracy/0.5 so 0.2 accuracy → 0.4x, 0.5 → 1.0x
+                    scale = max(0.1, accuracy / 0.5)
+                    train_df[feat_col] = train_df[feat_col] * scale
+                    scaled_count += 1
+        if scaled_count:
+            logger.info("Scaled %d narrative features by EMA accuracy", scaled_count)
+    except Exception as e:
+        logger.debug("Narrative feature scaling skipped: %s", e)
+
     # --- Count rich-feature rows ---
     feature_cols = INFERENCE_FEATURES & set(train_df.columns)
     rich_count = _count_rich_rows(train_df, feature_cols)
@@ -311,6 +342,26 @@ def train_classifier(db, config: dict = None, dataset_manager=None,
                                               test_data=holdout_df)
     except Exception as e:
         logger.warning("Narrative AG weight extraction failed: %s", e)
+
+    # Post-retrain: recompute outcome-based weights and compare to model importances
+    try:
+        outcome_weights = compute_narrative_weights_from_outcomes()
+        if outcome_weights:
+            result["outcome_weights"] = outcome_weights.get("_global", {})
+            # Compare: log fields where model and outcome analysis disagree
+            ag_path = os.path.join(cfg["model_dir"], "narrative_weights_ag.json")
+            if os.path.exists(ag_path):
+                with open(ag_path) as f:
+                    ag = json.load(f)
+                ag_global = ag.get("_global", {})
+                for field in outcome_weights.get("_global", {}):
+                    ow = outcome_weights["_global"].get(field, 0.5)
+                    aw = ag_global.get(field, 0.5)
+                    if abs(ow - aw) > 0.3:
+                        logger.info("Post-retrain divergence: %s outcome=%.2f ag=%.2f",
+                                    field, ow, aw)
+    except Exception as e:
+        logger.debug("Post-retrain outcome weight comparison skipped: %s", e)
 
     # Train quantile model if enough data
     if len(df) >= cfg["min_training_samples_quantile"]:

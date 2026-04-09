@@ -4200,7 +4200,28 @@ class ScannerEngine:
                     history = json.load(f)
 
             last_retrain_trades = history[-1]["trades_used"] if history else 0
-            if resolved - last_retrain_trades < retrain_n:
+            new_trades = resolved - last_retrain_trades
+
+            # Check for narrative accuracy improvement that warrants early retrain
+            # If a high-impact field improved significantly since last retrain,
+            # the model should learn from the now-more-reliable features sooner
+            narrative_improved = False
+            if new_trades >= 10 and history:
+                try:
+                    prev_narr = history[-1].get("narrative_accuracy", {})
+                    from ml.claude_bridge import ClaudeAnalysisBridge
+                    curr_narr = ClaudeAnalysisBridge().get_narrative_weights()
+                    for field in ("premium_discount", "directional_bias", "p3_phase"):
+                        prev_acc = prev_narr.get(field, 0.5)
+                        curr_acc = curr_narr.get(field, 0.5)
+                        if curr_acc - prev_acc >= 0.15:  # 15% improvement
+                            narrative_improved = True
+                            print(f"[RETRAIN] Narrative improvement detected: "
+                                  f"{field} {prev_acc:.0%} → {curr_acc:.0%}")
+                except Exception:
+                    pass
+
+            if not narrative_improved and new_trades < retrain_n:
                 return
 
             print(f"[RETRAIN] Auto-retrain triggered: {resolved} trades ({resolved - last_retrain_trades} new)")
@@ -4257,6 +4278,16 @@ class ScannerEngine:
             # Feature quality
             full_pct = 1 - eval_result.get("feature_quality", {}).get("minimal_feature_pct", 1.0)
 
+            # Capture narrative accuracy snapshot for tracking improvement over time
+            narrative_snapshot = {}
+            try:
+                from ml.claude_bridge import ClaudeAnalysisBridge
+                nw = ClaudeAnalysisBridge().get_narrative_weights()
+                narrative_snapshot = {k: round(v, 3) for k, v in nw.items()
+                                      if isinstance(v, (int, float))}
+            except Exception:
+                pass
+
             # Log to history
             from datetime import datetime
             entry = {
@@ -4268,6 +4299,7 @@ class ScannerEngine:
                 "weaknesses_before": weaknesses_before[:5],
                 "weaknesses_after": weaknesses_after[:5],
                 "full_feature_pct": round(full_pct, 3),
+                "narrative_accuracy": narrative_snapshot,
             }
             history.append(entry)
             history = history[-20:]  # keep last 20

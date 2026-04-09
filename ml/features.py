@@ -352,11 +352,12 @@ def _extract_htf_features(analysis: dict, calibration: dict | None) -> dict:
 
 
 def _extract_narrative_features(analysis: dict, calibration: dict | None) -> dict:
-    """Extract 4 narrative state features.
+    """Extract 5 narrative state features.
 
     Fields sourced from:
       - analysis["narrative_state"] for thesis_confidence, p3_progress, scan_count
       - calibration["opus_narrative"] for opus_sonnet_agreement
+      - EMA narrative weights for narrative_quality_score
     """
     ns = analysis.get("narrative_state") or {}
     cal = calibration or {}
@@ -398,11 +399,40 @@ def _extract_narrative_features(analysis: dict, calibration: dict | None) -> dic
     else:
         agreement = 0
 
+    # narrative_quality_score — weighted average of per-field EMA accuracy weights.
+    # Tells AutoGluon "how reliable is the narrative on this trade?"
+    # Fields with high EMA accuracy contribute more; low accuracy = noisy narrative.
+    nq_score = float('nan')
+    try:
+        from ml.claude_bridge import ClaudeAnalysisBridge
+        bridge = ClaudeAnalysisBridge()
+        kz = analysis.get("killzone", "")
+        nw = bridge.get_narrative_weights(killzone=kz if kz else None)
+        if nw:
+            # Weight the fields that ARE present in this analysis
+            present_weights = []
+            opus = (calibration or {}).get("opus_narrative") or {}
+            if analysis.get("premium_discount"):
+                present_weights.append(nw.get("premium_discount", 0.5))
+            if analysis.get("power_of_3_phase"):
+                present_weights.append(nw.get("p3_phase", 0.5))
+            if analysis.get("bias") or opus.get("directional_bias"):
+                present_weights.append(nw.get("directional_bias", 0.5))
+            if opus.get("intermarket_synthesis") or (calibration or {}).get("intermarket"):
+                present_weights.append(nw.get("intermarket_synthesis", 0.5))
+            if opus.get("key_levels"):
+                present_weights.append(nw.get("key_levels", 0.5))
+            if present_weights:
+                nq_score = sum(present_weights) / len(present_weights)
+    except Exception:
+        pass
+
     return {
         "thesis_confidence": thesis_conf,
         "p3_progress_encoded": p3_prog,
         "thesis_scan_count": scan_count,
         "opus_sonnet_agreement": agreement,
+        "narrative_quality_score": round(nq_score, 4) if nq_score == nq_score else float('nan'),
     }
 
 
