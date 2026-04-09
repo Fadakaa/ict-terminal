@@ -757,8 +757,10 @@ def _build_narrative_feedback_block(feedback: dict | None) -> str:
 
     blocks = []
 
-    # Track record from EMA weights
+    # Track record from blended weights + accuracy/impact gap analysis
     weights = feedback.get("weights", {})
+    ag_weights = feedback.get("ag_weights")  # outcome-based impact scores
+    ema_raw = feedback.get("ema_raw")  # raw EMA weights (accuracy)
     if weights:
         field_labels = {
             "directional_bias": "Directional bias",
@@ -770,6 +772,7 @@ def _build_narrative_feedback_block(feedback: dict | None) -> str:
         }
         # Only show fields with enough data
         lines = []
+        coaching_lines = []
         for field, label in field_labels.items():
             w = weights.get(field)
             if isinstance(w, dict):
@@ -780,6 +783,23 @@ def _build_narrative_feedback_block(feedback: dict | None) -> str:
                 total = 0
             if total >= 5:
                 lines.append(f"- {label} accuracy: {pct * 100:.0f}% ({total} trades)")
+
+            # Detect accuracy/impact gaps (high impact but low accuracy = improvement opportunity)
+            if ag_weights and ema_raw:
+                impact = ag_weights.get(field, 0.5)
+                accuracy = ema_raw.get(field, 0.5)
+                if impact >= 0.7 and accuracy < 0.35:
+                    coaching_lines.append(
+                        f"- **{label}**: High impact ({impact:.0%} win correlation) but "
+                        f"low accuracy ({accuracy:.0%}). When you get this right it "
+                        f"strongly predicts winning — invest more effort here. Study the "
+                        f"price structure carefully before committing."
+                    )
+                elif impact >= 0.7 and accuracy >= 0.5:
+                    coaching_lines.append(
+                        f"- {label}: Strong performer — both accurate ({accuracy:.0%}) and "
+                        f"impactful ({impact:.0%}). Trust your reads here."
+                    )
 
         if lines:
             # Determine emphasis from bandit params if available
@@ -792,11 +812,17 @@ def _build_narrative_feedback_block(feedback: dict | None) -> str:
             else:
                 emphasis_note = "Weight your analysis effort proportionally — more depth on what's working, less on what isn't."
 
-            blocks.append(
+            track_block = (
                 "YOUR RECENT TRACK RECORD (use to calibrate your confidence):\n"
                 + "\n".join(lines) + "\n\n"
                 + emphasis_note + "\n"
             )
+            if coaching_lines:
+                track_block += (
+                    "\nFIELD-SPECIFIC COACHING (from outcome analysis):\n"
+                    + "\n".join(coaching_lines) + "\n"
+                )
+            blocks.append(track_block)
 
     # Gold examples
     examples = feedback.get("examples", [])
