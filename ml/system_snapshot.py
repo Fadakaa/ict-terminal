@@ -74,13 +74,15 @@ class SystemSnapshotRecorder:
             "trigger": trigger,
         }
 
-        # 1. Narrative field weights
+        # 1. Narrative field weights (use _global for trend analysis compatibility)
         try:
             from ml.claude_bridge import ClaudeAnalysisBridge
             bridge = ClaudeAnalysisBridge()
             raw_weights = bridge._narrative_weights
+            # Use _global bucket for backward-compatible trend analysis
+            global_bucket = raw_weights.get("_global", raw_weights)
             snap["narrative_weights"] = {}
-            for field, val in raw_weights.items():
+            for field, val in global_bucket.items():
                 if isinstance(val, dict):
                     snap["narrative_weights"][field] = {
                         "weight": val.get("weight", 0.5),

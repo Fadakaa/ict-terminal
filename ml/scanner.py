@@ -2111,8 +2111,10 @@ class ScannerEngine:
             from ml.claude_bridge import ClaudeAnalysisBridge
             bridge = ClaudeAnalysisBridge()
 
-            # Start with EMA weights
-            weights = bridge._narrative_weights
+            session = get_current_killzone()
+
+            # Start with killzone-specific EMA weights (falls back to _global)
+            weights = bridge.get_narrative_weights(killzone=session)
 
             # Check if AG weights should override
             ag_path = os.path.join(
@@ -2124,13 +2126,15 @@ class ScannerEngine:
                     from ml.config import get_config as _gc
                     if get_active_model_type(_gc()["model_dir"]) in ("binary", "multi3"):
                         with open(ag_path) as f:
-                            weights = json.load(f)
+                            ag = json.load(f)
+                        if ag:
+                            # Pick killzone-specific AG weights, fall back to _global
+                            weights = ag.get(session, ag.get("_global", ag))
                 except Exception:
                     pass
 
             from ml.narrative_examples import NarrativeExampleStore
             store = NarrativeExampleStore()
-            session = get_current_killzone()
             bias_hint = (session_recap or {}).get("dominant_direction")
             examples = store.get_examples(session, bias_hint=bias_hint)
 
@@ -3584,7 +3588,7 @@ class ScannerEngine:
         if htf_narrative:
             try:
                 from ml.claude_bridge import ClaudeAnalysisBridge
-                _nw = ClaudeAnalysisBridge().get_narrative_weights()
+                _nw = ClaudeAnalysisBridge().get_narrative_weights(killzone=get_current_killzone())
             except Exception:
                 pass
 
@@ -3831,7 +3835,8 @@ class ScannerEngine:
             if narrative_json:
                 bridge.update_narrative_field_weights(
                     narrative_json, entry_dir, is_win, result["outcome"], setup,
-                    mfe_atr=result.get("mfe_atr"))
+                    mfe_atr=result.get("mfe_atr"),
+                    killzone=_kz or None)
                 try:
                     from ml.narrative_examples import NarrativeExampleStore
                     store = NarrativeExampleStore()

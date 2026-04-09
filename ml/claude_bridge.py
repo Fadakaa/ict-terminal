@@ -31,6 +31,7 @@ class ClaudeAnalysisBridge:
         "directional_bias", "p3_phase", "premium_discount",
         "confidence_calibration", "intermarket_synthesis", "key_levels",
     )
+    KILLZONE_KEYS = ("Asian", "London", "NY_AM", "NY_PM", "Off")
 
     def __init__(self, config: dict = None):
         self.cfg = config or get_config()
@@ -515,16 +516,50 @@ class ClaudeAnalysisBridge:
             "by_setup_type": {},
         }
 
+    def _make_initial_bucket(self) -> dict:
+        """Create a fresh weight bucket with initial values for all narrative fields."""
+        initial = self.cfg.get("narrative_ema_initial", 0.5)
+        return {f: {"weight": initial, "total": 0} for f in self.NARRATIVE_FIELDS}
+
     def _load_narrative_weights(self) -> dict:
-        """Load per-field EMA weights from disk."""
+        """Load per-field EMA weights from disk (segmented by killzone).
+
+        Handles migration from flat format to per-killzone format.
+        Flat format: {field: {weight, total}, ...}
+        Segmented format: {"_global": {field: {weight, total}}, "Asian": {...}, ...}
+        """
+        data = None
         if os.path.exists(self._narrative_weights_path):
             try:
                 with open(self._narrative_weights_path) as f:
-                    return json.load(f)
+                    data = json.load(f)
             except Exception:
                 pass
-        initial = self.cfg.get("narrative_ema_initial", 0.5)
-        return {f: {"weight": initial, "total": 0} for f in self.NARRATIVE_FIELDS}
+
+        if not data:
+            result = {"_global": self._make_initial_bucket()}
+            for kz in self.KILLZONE_KEYS:
+                result[kz] = self._make_initial_bucket()
+            return result
+
+        # Detect flat format: first key is a narrative field name, not _global/killzone
+        first_key = next(iter(data), "")
+        if first_key in self.NARRATIVE_FIELDS:
+            # Migrate: wrap existing data as _global
+            result = {"_global": data}
+            for kz in self.KILLZONE_KEYS:
+                result[kz] = self._make_initial_bucket()
+            self._narrative_weights = result
+            self._save_narrative_weights()
+            return result
+
+        # Already segmented — ensure all killzones exist
+        if "_global" not in data:
+            data["_global"] = self._make_initial_bucket()
+        for kz in self.KILLZONE_KEYS:
+            if kz not in data:
+                data[kz] = self._make_initial_bucket()
+        return data
 
     def _save_narrative_weights(self):
         """Persist narrative weights to disk."""
@@ -532,19 +567,38 @@ class ClaudeAnalysisBridge:
         with open(self._narrative_weights_path, "w") as f:
             json.dump(self._narrative_weights, f, indent=2)
 
-    def get_narrative_weights(self) -> dict:
-        """Return current EMA weights per narrative field."""
+    def get_narrative_weights(self, killzone: str = None) -> dict:
+        """Return EMA weights per narrative field, optionally for a specific killzone.
+
+        Falls back to _global if the killzone bucket has insufficient data.
+        """
+        min_kz = self.cfg.get("narrative_min_kz_trades", 10)
+
+        if killzone and killzone in self._narrative_weights:
+            bucket = self._narrative_weights[killzone]
+            # Check if this killzone has enough data
+            totals = [v.get("total", 0) if isinstance(v, dict) else 0
+                      for v in bucket.values()]
+            if totals and min(totals) >= min_kz:
+                return {k: v.get("weight", 0.5) if isinstance(v, dict) else v
+                        for k, v in bucket.items()}
+
+        # Fall back to global
+        bucket = self._narrative_weights.get("_global", {})
         return {k: v.get("weight", 0.5) if isinstance(v, dict) else v
-                for k, v in self._narrative_weights.items()}
+                for k, v in bucket.items()}
 
     def update_narrative_field_weights(self, narrative_json: dict,
                                         entry_direction: str, is_win: bool,
                                         outcome: str, setup: dict,
-                                        mfe_atr: float | None = None):
+                                        mfe_atr: float | None = None,
+                                        killzone: str | None = None):
         """Update EMA weight per narrative field based on trade outcome.
 
         Each field has its own correctness test. EMA update:
         weight = alpha * was_correct + (1 - alpha) * previous_weight
+
+        Updates both _global and killzone-specific buckets when killzone is provided.
 
         MFE-aware scoring: when a loss has high MFE (≥1.0 ATR), the narrative
         was directionally correct but execution failed (SL too tight, bad
@@ -677,14 +731,25 @@ class ClaudeAnalysisBridge:
         else:
             field_scores["key_levels"] = 0.2  # don't zero out entirely
 
-        # Apply EMA update with floor of 0.05
+        # Apply EMA update with floor of 0.05 — dual-bucket (global + killzone)
         weight_floor = 0.05
+        initial = self.cfg.get("narrative_ema_initial", 0.5)
+        g_bucket = self._narrative_weights.setdefault("_global", {})
+
         for field, score in field_scores.items():
-            w = self._narrative_weights.setdefault(
-                field, {"weight": self.cfg.get("narrative_ema_initial", 0.5), "total": 0})
-            w["weight"] = max(weight_floor,
-                              alpha * score + (1 - alpha) * w["weight"])
-            w["total"] = w.get("total", 0) + 1
+            # Update global
+            g = g_bucket.setdefault(field, {"weight": initial, "total": 0})
+            g["weight"] = max(weight_floor,
+                              alpha * score + (1 - alpha) * g["weight"])
+            g["total"] = g.get("total", 0) + 1
+
+            # Update killzone-specific
+            if killzone and killzone in self.KILLZONE_KEYS:
+                kz_bucket = self._narrative_weights.setdefault(killzone, {})
+                k = kz_bucket.setdefault(field, {"weight": initial, "total": 0})
+                k["weight"] = max(weight_floor,
+                                  alpha * score + (1 - alpha) * k["weight"])
+                k["total"] = k.get("total", 0) + 1
 
         self._save_narrative_weights()
 
@@ -905,6 +970,66 @@ class ClaudeAnalysisBridge:
         tracker = self._accuracy.get("narrative_tracker", {})
         kp = tracker.get("by_killzone_phase", {})
         return {k: v for k, v in kp.items() if v.get("total", 0) >= min_trades}
+
+    def backfill_killzone_weights(self, db) -> dict:
+        """Replay resolved trades to warm up per-killzone EMA weight buckets.
+
+        Returns:
+            Summary dict with per-killzone trade counts.
+        """
+        import logging
+        _log = logging.getLogger(__name__)
+
+        setups = db.get_resolved_setups() if hasattr(db, "get_resolved_setups") else []
+        if not setups:
+            # Fallback: try get_training_data
+            try:
+                df = db.get_training_data()
+                _log.info("Backfill: got %d rows from training data", len(df))
+            except Exception:
+                return {"status": "no_data"}
+            return {"status": "no_resolved_setups"}
+
+        # Reset killzone buckets (keep _global intact)
+        saved_global = deepcopy(self._narrative_weights.get("_global", {}))
+        for kz in self.KILLZONE_KEYS:
+            self._narrative_weights[kz] = self._make_initial_bucket()
+
+        counts = {kz: 0 for kz in self.KILLZONE_KEYS}
+        WIN_OUTCOMES = {"tp1", "tp2", "tp3", "tp1_hit", "tp2_hit", "tp3_hit"}
+
+        for setup in setups:
+            cal_json = setup.get("calibration_json") or {}
+            if isinstance(cal_json, str):
+                try:
+                    cal_json = json.loads(cal_json)
+                except Exception:
+                    continue
+            narrative_json = cal_json.get("opus_narrative", {})
+            if not narrative_json:
+                continue
+
+            kz = setup.get("killzone", "")
+            if kz not in self.KILLZONE_KEYS:
+                continue
+
+            result = setup.get("actual_result", "")
+            is_win = result in WIN_OUTCOMES
+            entry_dir = setup.get("direction", "")
+            mfe_atr = setup.get("mfe_atr")
+
+            # Replay EMA update with killzone (also touches _global, restored below)
+            self.update_narrative_field_weights(
+                narrative_json, entry_dir, is_win, result, setup,
+                mfe_atr=mfe_atr, killzone=kz)
+            counts[kz] = counts.get(kz, 0) + 1
+
+        # Restore _global to pre-backfill state (backfill only warms killzone buckets)
+        self._narrative_weights["_global"] = saved_global
+        self._save_narrative_weights()
+
+        _log.info("Backfill killzone weights: %s", counts)
+        return {"status": "ok", "counts": counts}
 
     def update_prospect_tracker(self, zone_type: str, was_reached: bool,
                                   was_triggered: bool, is_win: bool | None = None):

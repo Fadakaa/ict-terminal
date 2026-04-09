@@ -1347,8 +1347,10 @@ async def backfill_features():
 def narrative_weights():
     """Return current narrative EMA weights + AG override if active."""
     from ml.claude_bridge import ClaudeAnalysisBridge
+    from ml.prompts import get_current_killzone
     bridge = ClaudeAnalysisBridge()
-    ema_weights = bridge.get_narrative_weights()
+    current_kz = get_current_killzone()
+    ema_weights = bridge.get_narrative_weights(killzone=current_kz)
 
     ag_weights = None
     ag_path = os.path.join(cfg["model_dir"], "narrative_weights_ag.json")
@@ -1361,9 +1363,34 @@ def narrative_weights():
 
     return {
         "ema_weights": ema_weights,
+        "ema_all_killzones": bridge._narrative_weights,
         "ag_weights": ag_weights,
-        "active_source": "autogluon" if ag_weights else "ema",
+        "current_killzone": current_kz,
+        "active_source": "autogluon" if ag_weights and ag_weights.get("_global") else "ema",
     }
+
+
+@app.post("/narrative/weights/extract")
+def narrative_weights_extract():
+    """Manually trigger AG narrative weight extraction from the trained classifier."""
+    from ml.training import extract_ag_weights
+    from ml.scanner_db import TradeLogger
+    db = TradeLogger(config=cfg)
+    result = extract_ag_weights(model_dir=cfg["model_dir"], db=db)
+    if result:
+        return {"status": "ok", "weights": result}
+    return {"status": "error", "message": "No classifier found or extraction failed"}
+
+
+@app.post("/narrative/weights/backfill-killzones")
+def narrative_weights_backfill():
+    """Replay resolved trades to warm up per-killzone EMA weight buckets."""
+    from ml.claude_bridge import ClaudeAnalysisBridge
+    from ml.scanner_db import TradeLogger
+    bridge = ClaudeAnalysisBridge()
+    db = TradeLogger(config=cfg)
+    result = bridge.backfill_killzone_weights(db)
+    return result
 
 
 @app.get("/narrative/examples")

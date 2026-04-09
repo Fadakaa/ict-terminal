@@ -98,6 +98,7 @@ _DEFAULT_CONFIG = {
     "narrative_bandit_retire_wr": 0.35,
     "narrative_bandit_retire_min_trials": 30,
     "narrative_bandit_new_variant_every": 100,
+    "narrative_min_kz_trades": 10,
     # Anticipatory alert system
     "prospect_before_killzone_minutes": 15,
     "trigger_poll_interval_seconds": 90,

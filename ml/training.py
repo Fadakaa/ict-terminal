@@ -305,9 +305,10 @@ def train_classifier(db, config: dict = None, dataset_manager=None,
         "model_meta": meta,
     }
 
-    # Extract narrative-relevant feature importance
+    # Extract narrative-relevant feature importance (pass holdout for permutation importance)
     try:
-        _extract_narrative_feature_importance(cfg["model_dir"], canonical_path)
+        _extract_narrative_feature_importance(cfg["model_dir"], canonical_path,
+                                              test_data=holdout_df)
     except Exception as e:
         logger.warning("Narrative AG weight extraction failed: %s", e)
 
@@ -391,49 +392,28 @@ def should_retrain(db, config: dict = None) -> bool:
     return new_since_last >= cfg["retrain_on_n_new_trades"]
 
 
-def _extract_narrative_feature_importance(model_dir: str, classifier_path: str):
-    """Extract feature importance for narrative-derived features, normalized to 0-1.
+FEATURE_TO_NARRATIVE = {
+    "entry_direction": "directional_bias",
+    "bias_direction_match": "directional_bias",
+    "trend_strength": "p3_phase",
+    "price_vs_20sma": "premium_discount",
+    "num_confluences": "confidence_calibration",
+    "gold_dxy_corr_20": "intermarket_synthesis",
+    "gold_dxy_diverging": "intermarket_synthesis",
+    "dxy_range_position": "intermarket_synthesis",
+    "yield_direction": "intermarket_synthesis",
+    "ob_nearest_distance_atr": "key_levels",
+    "fvg_nearest_distance_atr": "key_levels",
+    "liq_nearest_target_distance_atr": "key_levels",
+}
 
-    Maps ML feature names to narrative field names and writes to
-    narrative_weights_ag.json. These override EMA weights when the
-    AutoGluon model is active.
-    """
-    if TabularPredictor is None:
-        return
+# Killzone decoding for per-killzone AG weight extraction
+_KZ_ENCODED_TO_NAME = {1: "London", 2: "NY", 3: "Asian"}
 
-    predictor = TabularPredictor.load(classifier_path, verbosity=0,
-                                      require_version_match=False)
 
-    try:
-        imp_df = predictor.feature_importance(silent=True)
-        imp = imp_df["importance"].to_dict() if "importance" in imp_df.columns else {}
-    except Exception:
-        # Try native importance
-        try:
-            feat_names = predictor.feature_metadata_in.get_features()
-            imp = {f: 1.0 / len(feat_names) for f in feat_names}
-        except Exception:
-            return
-
-    if not imp:
-        return
-
-    FEATURE_TO_NARRATIVE = {
-        "entry_direction": "directional_bias",
-        "bias_direction_match": "directional_bias",
-        "trend_strength": "p3_phase",
-        "price_vs_20sma": "premium_discount",
-        "num_confluences": "confidence_calibration",
-        "gold_dxy_corr_20": "intermarket_synthesis",
-        "gold_dxy_diverging": "intermarket_synthesis",
-        "dxy_range_position": "intermarket_synthesis",
-        "yield_direction": "intermarket_synthesis",
-        "ob_nearest_distance_atr": "key_levels",
-        "fvg_nearest_distance_atr": "key_levels",
-        "liq_nearest_target_distance_atr": "key_levels",
-    }
-
-    narrative_scores = {}
+def _importance_to_narrative(imp: dict) -> dict:
+    """Map raw feature importances to narrative field weights, normalized 0-1."""
+    narrative_scores: dict[str, list[float]] = {}
     for feat, narrative_field in FEATURE_TO_NARRATIVE.items():
         if feat in imp:
             narrative_scores.setdefault(narrative_field, []).append(abs(imp[feat]))
@@ -443,12 +423,137 @@ def _extract_narrative_feature_importance(model_dir: str, classifier_path: str):
         narrative_weights[field] = sum(scores) / len(scores)
 
     if narrative_weights:
-        max_w = max(narrative_weights.values()) if narrative_weights.values() else 1
+        max_w = max(narrative_weights.values())
         if max_w > 0:
             narrative_weights = {k: round(v / max_w, 4)
                                  for k, v in narrative_weights.items()}
 
+    return narrative_weights
+
+
+def _get_feature_importance(predictor, test_data=None) -> dict:
+    """Extract feature importance dict from a predictor, with fallbacks."""
+    try:
+        imp_df = predictor.feature_importance(data=test_data, silent=True)
+        imp = imp_df["importance"].to_dict() if "importance" in imp_df.columns else {}
+        if imp:
+            return imp
+    except Exception:
+        pass
+
+    # Fallback: uniform importance
+    try:
+        feat_names = predictor.feature_metadata_in.get_features()
+        return {f: 1.0 / len(feat_names) for f in feat_names}
+    except Exception:
+        return {}
+
+
+def _extract_narrative_feature_importance(model_dir: str, classifier_path: str,
+                                          test_data=None):
+    """Extract feature importance for narrative-derived features, normalized to 0-1.
+
+    Maps ML feature names to narrative field names and writes to
+    narrative_weights_ag.json. These override EMA weights when the
+    AutoGluon model is active.
+
+    Writes per-killzone weights when test_data contains killzone_encoded
+    and session_hour columns.
+    """
+    if TabularPredictor is None:
+        return
+
+    predictor = TabularPredictor.load(classifier_path, verbosity=0,
+                                      require_version_match=False)
+
+    imp = _get_feature_importance(predictor, test_data)
+    if not imp:
+        return
+
+    # Global weights
+    global_weights = _importance_to_narrative(imp)
+    if not global_weights:
+        return
+
+    result = {"_global": global_weights}
+
+    # Per-killzone weights (when test data with killzone info is available)
+    min_kz = 10
+    if test_data is not None and "killzone_encoded" in test_data.columns:
+        try:
+            for kz_code, kz_name in _KZ_ENCODED_TO_NAME.items():
+                mask = test_data["killzone_encoded"] == kz_code
+                if kz_name == "NY" and "session_hour" in test_data.columns:
+                    # Split NY into AM/PM
+                    for sub_name, hour_lo, hour_hi in [("NY_AM", 12, 16), ("NY_PM", 16, 20)]:
+                        sub_mask = mask & test_data["session_hour"].between(hour_lo, hour_hi - 1)
+                        subset = test_data[sub_mask]
+                        if len(subset) >= min_kz:
+                            kz_imp = _get_feature_importance(predictor, subset)
+                            if kz_imp:
+                                kz_w = _importance_to_narrative(kz_imp)
+                                if kz_w:
+                                    result[sub_name] = kz_w
+                else:
+                    subset = test_data[mask]
+                    if len(subset) >= min_kz:
+                        kz_imp = _get_feature_importance(predictor, subset)
+                        if kz_imp:
+                            kz_w = _importance_to_narrative(kz_imp)
+                            if kz_w:
+                                result[kz_name] = kz_w
+
+            # Off = everything not in 1/2/3
+            off_mask = ~test_data["killzone_encoded"].isin([1, 2, 3])
+            off_subset = test_data[off_mask]
+            if len(off_subset) >= min_kz:
+                off_imp = _get_feature_importance(predictor, off_subset)
+                if off_imp:
+                    off_w = _importance_to_narrative(off_imp)
+                    if off_w:
+                        result["Off"] = off_w
+        except Exception as e:
+            logger.warning("Per-killzone AG weight extraction failed: %s", e)
+
     path = os.path.join(model_dir, "narrative_weights_ag.json")
     with open(path, "w") as f:
-        json.dump(narrative_weights, f, indent=2)
-    logger.info("Narrative AG weights extracted: %s", narrative_weights)
+        json.dump(result, f, indent=2)
+    logger.info("Narrative AG weights extracted: %s", result)
+    return result
+
+
+def extract_ag_weights(model_dir: str = None, db=None) -> dict:
+    """Standalone extraction of AG narrative weights from the trained classifier.
+
+    Can be called independently of training to populate narrative_weights_ag.json.
+
+    Returns:
+        Extracted weights dict or empty dict on failure.
+    """
+    cfg = get_config()
+    model_dir = model_dir or cfg["model_dir"]
+
+    # Find classifier
+    classifier_path = os.path.join(model_dir, "classifier")
+    if not os.path.exists(classifier_path):
+        classifier_path = os.path.join(model_dir, "classifier_binary")
+    if not os.path.exists(classifier_path):
+        logger.error("No classifier found in %s", model_dir)
+        return {}
+
+    # Load test data for permutation importance
+    test_data = None
+    try:
+        if db is None:
+            from ml.scanner_db import TradeLogger
+            db = TradeLogger(config=cfg)
+        df = db.get_training_data()
+        if len(df) >= 10:
+            keep_cols = [c for c in df.columns if c in INFERENCE_FEATURES]
+            test_data = df[keep_cols]
+    except Exception as e:
+        logger.warning("Could not load test data for AG extraction: %s", e)
+
+    result = _extract_narrative_feature_importance(model_dir, classifier_path,
+                                                   test_data=test_data)
+    return result or {}
