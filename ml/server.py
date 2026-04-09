@@ -1426,20 +1426,25 @@ def narrative_weights_extract_debug():
         diag["predictor_features"] = predictor.feature_metadata_in.get_features()[:10]
         diag["predictor_feature_count"] = len(predictor.feature_metadata_in.get_features())
 
-        # Load test data
-        from ml.database import TradeLogger
+        # Load test data (same path as extract_ag_weights: dataset manager first)
         from ml.training import INFERENCE_FEATURES, WIN_OUTCOMES
-        db = TradeLogger(config=_cfg)
-        df = db.get_training_data()
+        from ml.dataset import TrainingDatasetManager
+        dm = TrainingDatasetManager(config=_cfg)
+        df = dm.get_blended_dataset(live_only=True)
+        label = "outcome"
+        if df.empty:
+            df = dm.get_blended_dataset(live_only=False)
+        diag["data_source"] = "dataset_manager"
         diag["training_rows"] = len(df)
         diag["training_cols"] = list(df.columns)[:15]
-        diag["has_actual_result"] = "actual_result" in df.columns
+        diag["label_column"] = label
+        diag["has_label"] = label in df.columns
 
-        if "actual_result" in df.columns:
-            diag["outcome_dist"] = df["actual_result"].value_counts().to_dict()
+        if label in df.columns:
+            diag["outcome_dist"] = df[label].value_counts().to_dict()
 
         binary_label = "__binary_outcome"
-        df[binary_label] = df["actual_result"].isin(WIN_OUTCOMES).map(
+        df[binary_label] = df[label].isin(WIN_OUTCOMES).map(
             {True: "win", False: "loss"})
         diag["binary_dist"] = df[binary_label].value_counts().to_dict()
 

@@ -535,6 +535,7 @@ def extract_ag_weights(model_dir: str = None, db=None) -> dict:
     """Standalone extraction of AG narrative weights from the trained classifier.
 
     Can be called independently of training to populate narrative_weights_ag.json.
+    Uses TrainingDatasetManager (same data source as train_classifier in production).
 
     Returns:
         Extracted weights dict or empty dict on failure.
@@ -551,18 +552,22 @@ def extract_ag_weights(model_dir: str = None, db=None) -> dict:
         return {}
 
     # Load test data for permutation importance
-    # Need features + binary label for feature_importance() evaluation
+    # Use TrainingDatasetManager (production path), fall back to TradeLogger
     test_data = None
     try:
-        if db is None:
-            from ml.database import TradeLogger
-            db = TradeLogger(config=cfg)
-        df = db.get_training_data()
-        logger.info("AG extraction: loaded %d rows, columns: %s",
-                    len(df), [c for c in df.columns if c in FEATURE_TO_NARRATIVE or c == "actual_result"][:10])
+        from ml.dataset import TrainingDatasetManager
+        dm = TrainingDatasetManager(config=cfg)
+        df = dm.get_blended_dataset(live_only=True)
+        label = "outcome"
+        if df.empty:
+            df = dm.get_blended_dataset(live_only=False)
+        if df.empty and db is not None:
+            df = db.get_training_data()
+            label = "actual_result"
+        logger.info("AG extraction: loaded %d rows via %s",
+                    len(df), "dataset_manager" if label == "outcome" else "trade_logger")
         if len(df) >= 10:
             binary_label = "__binary_outcome"
-            label = "actual_result"
             df[binary_label] = df[label].isin(WIN_OUTCOMES).map(
                 {True: "win", False: "loss"})
             label_dist = df[binary_label].value_counts().to_dict()
