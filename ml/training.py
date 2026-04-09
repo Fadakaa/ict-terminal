@@ -542,14 +542,20 @@ def extract_ag_weights(model_dir: str = None, db=None) -> dict:
         return {}
 
     # Load test data for permutation importance
+    # Need features + binary label for feature_importance() evaluation
     test_data = None
     try:
         if db is None:
-            from ml.scanner_db import TradeLogger
+            from ml.database import TradeLogger
             db = TradeLogger(config=cfg)
         df = db.get_training_data()
         if len(df) >= 10:
-            keep_cols = [c for c in df.columns if c in INFERENCE_FEATURES]
+            binary_label = "__binary_outcome"
+            label = "actual_result"
+            df[binary_label] = df[label].isin(WIN_OUTCOMES).map(
+                {True: "win", False: "loss"})
+            keep_cols = [c for c in df.columns
+                         if c in INFERENCE_FEATURES or c == binary_label]
             test_data = df[keep_cols]
     except Exception as e:
         logger.warning("Could not load test data for AG extraction: %s", e)

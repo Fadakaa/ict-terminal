@@ -1387,7 +1387,7 @@ def narrative_weights_extract():
         try:
             _cfg = get_config()
             from ml.training import extract_ag_weights
-            from ml.scanner_db import TradeLogger
+            from ml.database import TradeLogger
             db = TradeLogger(config=_cfg)
             result = extract_ag_weights(model_dir=_cfg["model_dir"], db=db)
             logger.info("AG weight extraction complete: %s", result)
@@ -1405,11 +1405,10 @@ def narrative_weights_backfill():
 
     def _run():
         try:
-            _cfg = get_config()
             from ml.claude_bridge import ClaudeAnalysisBridge
-            from ml.scanner_db import TradeLogger
+            from ml.scanner_db import ScannerDB
             bridge = ClaudeAnalysisBridge()
-            db = TradeLogger(config=_cfg)
+            db = ScannerDB()
             result = bridge.backfill_killzone_weights(db)
             logger.info("Killzone weight backfill complete: %s", result)
         except Exception as e:
