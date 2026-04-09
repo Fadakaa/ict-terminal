@@ -438,7 +438,9 @@ def _get_feature_importance(predictor, test_data=None) -> dict:
             logger.info("feature_importance: test_data shape=%s, cols=%s, label=%s",
                         test_data.shape, list(test_data.columns)[:5],
                         predictor.label)
-        imp_df = predictor.feature_importance(data=test_data, silent=True)
+        imp_df = predictor.feature_importance(
+            data=test_data, subsample_size=min(100, len(test_data)) if test_data is not None else 100,
+            num_shuffle_sets=3, silent=True)
         imp = imp_df["importance"].to_dict() if "importance" in imp_df.columns else {}
         if imp:
             logger.info("feature_importance: got %d features, sample: %s",
