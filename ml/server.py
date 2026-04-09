@@ -1369,12 +1369,23 @@ def narrative_weights():
             all_kz[key] = {k: v.get("weight", 0.5) if isinstance(v, dict) else v
                            for k, v in bucket.items()}
 
+    # Compute blended weights (what the scanner actually uses)
+    blended = dict(ema_weights)
+    has_ag = ag_weights and ag_weights.get("_global")
+    if has_ag:
+        ag_kz = ag_weights.get(current_kz, ag_weights.get("_global", {}))
+        for field in blended:
+            ema_w = blended[field]
+            ag_w = ag_kz.get(field, 0.5)
+            blended[field] = round((max(0.01, ema_w) * max(0.01, ag_w)) ** 0.5, 4)
+
     return {
         "ema_weights": ema_weights,
         "ema_all_killzones": all_kz,
         "ag_weights": ag_weights,
+        "blended_weights": blended if has_ag else ema_weights,
         "current_killzone": current_kz,
-        "active_source": "autogluon" if ag_weights and ag_weights.get("_global") else "ema",
+        "active_source": "blended" if has_ag else "ema",
     }
 
 

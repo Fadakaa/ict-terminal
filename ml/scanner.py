@@ -2116,7 +2116,10 @@ class ScannerEngine:
             # Start with killzone-specific EMA weights (falls back to _global)
             weights = bridge.get_narrative_weights(killzone=session)
 
-            # Check if AG weights should override
+            # Blend outcome-based (AG) weights with EMA weights.
+            # EMA measures accuracy (how often correct), AG measures impact
+            # (correlation with winning). Blend = 50/50 geometric mean so
+            # neither dominates and both dimensions contribute.
             ag_path = os.path.join(
                 self.cfg.get("model_dir", os.path.join(os.path.dirname(__file__), "models")),
                 "narrative_weights_ag.json")
@@ -2128,8 +2131,12 @@ class ScannerEngine:
                         with open(ag_path) as f:
                             ag = json.load(f)
                         if ag:
-                            # Pick killzone-specific AG weights, fall back to _global
-                            weights = ag.get(session, ag.get("_global", ag))
+                            ag_kz = ag.get(session, ag.get("_global", {}))
+                            for field in weights:
+                                ema_w = weights[field]
+                                ag_w = ag_kz.get(field, 0.5)
+                                # Geometric mean: sqrt(ema * ag) — respects both signals
+                                weights[field] = round((max(0.01, ema_w) * max(0.01, ag_w)) ** 0.5, 4)
                 except Exception:
                     pass
 
