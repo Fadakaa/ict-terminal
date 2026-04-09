@@ -97,7 +97,7 @@ class TrainingDatasetManager:
         self._df = pd.concat([self._df, new_df], ignore_index=True)
         self._save()
 
-    def get_blended_dataset(self) -> pd.DataFrame:
+    def get_blended_dataset(self, live_only=False) -> pd.DataFrame:
         """Return all rows with computed sample_weight column.
 
         WFO weight decays as live trades grow:
@@ -108,6 +108,10 @@ class TrainingDatasetManager:
             return pd.DataFrame()
 
         df = self._df.copy()
+        if live_only and "source" in df.columns:
+            df = df[df["source"] == "live"].copy()
+            if df.empty:
+                return pd.DataFrame()
         live_count = len(df[df["source"] == "live"]) if "source" in df.columns else 0
         decay_rate = self.cfg.get("wfo_weight_decay_rate", 200)
         live_weight = self.cfg.get("live_weight_multiplier", 5.0)

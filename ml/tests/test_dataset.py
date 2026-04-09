@@ -139,6 +139,48 @@ class TestTrainingDatasetManager:
         count = dm.ingest_wfo_trades([])
         assert count == 0
 
+    def test_get_blended_dataset_live_only(self, dm, sample_wfo_trades):
+        """live_only=True should exclude WFO rows entirely."""
+        dm.ingest_wfo_trades(sample_wfo_trades)
+        full_features = {
+            "ob_count": 2, "ob_bullish_count": 1, "ob_bearish_count": 1,
+            "ob_strongest_strength": 3, "ob_nearest_distance_atr": 0.5,
+            "ob_avg_size_atr": 0.3, "ob_alignment": 1,
+            "fvg_count": 1, "fvg_unfilled_count": 1, "fvg_nearest_distance_atr": 0.2,
+            "fvg_avg_size_atr": 0.1, "fvg_alignment": 1,
+            "liq_buyside_count": 1, "liq_sellside_count": 1,
+            "liq_nearest_target_distance_atr": 1.0, "liq_nearest_threat_distance_atr": 2.0,
+            "risk_reward_tp1": 3.0, "risk_reward_tp2": 5.0,
+            "sl_distance_atr": 1.5, "tp1_distance_atr": 4.5,
+            "entry_direction": 1, "bias_direction_match": 1,
+            "num_confluences": 3, "has_ob_fvg_overlap": 1,
+        }
+        dm.ingest_live_trade(
+            features=full_features,
+            outcome="tp1_hit", mfe=3.0, mae=0.5, pnl=2.5,
+        )
+        dm.ingest_live_trade(
+            features=full_features,
+            outcome="stopped_out", mfe=0.5, mae=2.0, pnl=-1.0,
+        )
+
+        # Default: includes both WFO and live
+        df_all = dm.get_blended_dataset()
+        assert len(df_all[df_all["source"] == "wfo"]) == 3
+        assert len(df_all[df_all["source"] == "live"]) == 2
+
+        # live_only: excludes WFO
+        df_live = dm.get_blended_dataset(live_only=True)
+        assert len(df_live) == 2
+        assert all(df_live["source"] == "live")
+        assert "sample_weight" in df_live.columns
+
+    def test_get_blended_dataset_live_only_empty(self, dm, sample_wfo_trades):
+        """live_only=True with no live trades returns empty DataFrame."""
+        dm.ingest_wfo_trades(sample_wfo_trades)
+        df = dm.get_blended_dataset(live_only=True)
+        assert len(df) == 0
+
 
 # ─── Negative Example Generation ────────────────────────────────────
 
