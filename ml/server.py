@@ -1398,6 +1398,83 @@ def narrative_weights_extract():
     return {"status": "started", "message": "AG weight extraction running in background"}
 
 
+@app.get("/narrative/weights/extract-debug")
+def narrative_weights_extract_debug():
+    """Synchronous AG weight extraction with full diagnostics."""
+    import traceback
+    diag = {}
+    try:
+        _cfg = get_config()
+        model_dir = _cfg["model_dir"]
+
+        # Check classifier path
+        import os
+        classifier_path = os.path.join(model_dir, "classifier")
+        if not os.path.exists(classifier_path):
+            classifier_path = os.path.join(model_dir, "classifier_binary")
+        diag["classifier_path"] = classifier_path
+        diag["classifier_exists"] = os.path.exists(classifier_path)
+
+        if not diag["classifier_exists"]:
+            return {"error": "no classifier found", "diag": diag}
+
+        # Load predictor
+        from autogluon.tabular import TabularPredictor
+        predictor = TabularPredictor.load(classifier_path, verbosity=0,
+                                           require_version_match=False)
+        diag["predictor_label"] = predictor.label
+        diag["predictor_features"] = predictor.feature_metadata_in.get_features()[:10]
+        diag["predictor_feature_count"] = len(predictor.feature_metadata_in.get_features())
+
+        # Load test data
+        from ml.database import TradeLogger
+        from ml.training import INFERENCE_FEATURES, WIN_OUTCOMES
+        db = TradeLogger(config=_cfg)
+        df = db.get_training_data()
+        diag["training_rows"] = len(df)
+        diag["training_cols"] = list(df.columns)[:15]
+        diag["has_actual_result"] = "actual_result" in df.columns
+
+        if "actual_result" in df.columns:
+            diag["outcome_dist"] = df["actual_result"].value_counts().to_dict()
+
+        binary_label = "__binary_outcome"
+        df[binary_label] = df["actual_result"].isin(WIN_OUTCOMES).map(
+            {True: "win", False: "loss"})
+        diag["binary_dist"] = df[binary_label].value_counts().to_dict()
+
+        keep_cols = [c for c in df.columns
+                     if c in INFERENCE_FEATURES or c == binary_label]
+        test_data = df[keep_cols]
+        diag["test_data_shape"] = list(test_data.shape)
+        diag["test_data_cols"] = list(test_data.columns)[:10]
+        diag["label_in_test_data"] = binary_label in test_data.columns
+
+        # Check which predictor features are missing from test data
+        pred_feats = set(predictor.feature_metadata_in.get_features())
+        test_feats = set(test_data.columns) - {binary_label}
+        diag["missing_from_test"] = list(pred_feats - test_feats)[:10]
+        diag["extra_in_test"] = list(test_feats - pred_feats)[:10]
+
+        # Try feature importance
+        try:
+            imp_df = predictor.feature_importance(data=test_data, silent=True)
+            diag["imp_df_shape"] = list(imp_df.shape)
+            diag["imp_df_columns"] = list(imp_df.columns)
+            imp = imp_df["importance"].to_dict() if "importance" in imp_df.columns else {}
+            diag["importance_sample"] = dict(list(imp.items())[:5])
+            diag["importance_nonzero"] = sum(1 for v in imp.values() if v != 0)
+        except Exception as e:
+            diag["feature_importance_error"] = str(e)
+            diag["feature_importance_traceback"] = traceback.format_exc()[-500:]
+
+        return {"status": "ok", "diag": diag}
+    except Exception as e:
+        diag["top_level_error"] = str(e)
+        diag["top_level_traceback"] = traceback.format_exc()[-500:]
+        return {"status": "error", "diag": diag}
+
+
 @app.post("/narrative/weights/backfill-killzones")
 def narrative_weights_backfill():
     """Replay resolved trades to warm up per-killzone EMA weight buckets (background)."""
