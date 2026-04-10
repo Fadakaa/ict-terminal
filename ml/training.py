@@ -243,6 +243,10 @@ def train_classifier(db, config: dict = None, dataset_manager=None,
         {True: "win", False: "loss"})
 
     binary_path = os.path.join(cfg["model_dir"], "classifier_binary")
+    # Clear old model so AutoGluon doesn't error with "Learner is already fit"
+    import shutil
+    if os.path.exists(binary_path):
+        shutil.rmtree(binary_path)
     os.makedirs(binary_path, exist_ok=True)
 
     binary_cols = [c for c in train_df_binary.columns
