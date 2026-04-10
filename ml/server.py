@@ -314,6 +314,9 @@ def model_reset():
     return {"status": "reset", "removed": removed}
 
 
+_retrain_status = {"running": False, "last_result": None, "last_error": None}
+
+
 @app.post("/retrain")
 def retrain(db: TradeLogger = Depends(get_db), dm=Depends(get_dataset_manager)):
     cfg = get_config()
@@ -334,21 +337,50 @@ def retrain(db: TradeLogger = Depends(get_db), dm=Depends(get_dataset_manager)):
             detail=f"Insufficient data: {effective_count}/{cfg['min_training_samples']} trades needed",
         )
 
-    try:
-        from ml.training import train_classifier
-        result = train_classifier(db, config=cfg, dataset_manager=dm if total > 0 else None)
+    if _retrain_status["running"]:
+        return {"status": "already_running", "message": "Retrain is in progress. Check /retrain/status."}
 
-        # Auto-evaluate after retrain
+    # Run training in background thread so the endpoint returns immediately.
+    # AutoGluon training takes 1-5 minutes; Railway edge proxy times out at ~60s.
+    import threading
+
+    def _run_retrain():
+        _retrain_status["running"] = True
+        _retrain_status["last_error"] = None
         try:
-            from ml.evaluation import evaluate_classifier_walkforward
-            eval_result = evaluate_classifier_walkforward(dm if total > 0 else None, config=cfg)
-            result["evaluation"] = eval_result
-        except Exception as e:
-            result["evaluation_error"] = str(e)
+            from ml.training import train_classifier
+            result = train_classifier(
+                db, config=cfg,
+                dataset_manager=dm if total > 0 else None,
+                live_only=True,
+            )
 
-        return result
-    except ImportError:
-        raise HTTPException(status_code=500, detail="AutoGluon not installed")
+            # Auto-evaluate after retrain
+            try:
+                from ml.evaluation import evaluate_classifier_walkforward
+                eval_result = evaluate_classifier_walkforward(dm if total > 0 else None, config=cfg)
+                result["evaluation"] = eval_result
+            except Exception as e:
+                result["evaluation_error"] = str(e)
+
+            _retrain_status["last_result"] = result
+        except Exception as e:
+            _retrain_status["last_error"] = str(e)
+            _retrain_status["last_result"] = {"status": "error", "error": str(e)}
+        finally:
+            _retrain_status["running"] = False
+
+    threading.Thread(target=_run_retrain, daemon=True).start()
+    return {"status": "started", "message": "Retrain started in background. Check /retrain/status."}
+
+
+@app.get("/retrain/status")
+def retrain_status():
+    return {
+        "running": _retrain_status["running"],
+        "last_result": _retrain_status["last_result"],
+        "last_error": _retrain_status["last_error"],
+    }
 
 
 @app.get("/model/info")
