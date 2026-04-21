@@ -3266,7 +3266,7 @@ class ScannerEngine:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-5",
                     "max_tokens": 400,
                     "temperature": 0,
                     "messages": [{"role": "user", "content": prompt}],
@@ -3655,6 +3655,10 @@ class ScannerEngine:
                         "Investigate this zone interaction as a priority.\n\n")
         prompt = tf_note + prompt
 
+        # Strip Unicode line/paragraph separators that OANDA data occasionally injects —
+        # these cause httpx to fail with 'ascii' codec errors.
+        prompt = prompt.replace('\u2028', '\n').replace('\u2029', '\n')
+
         # Chart images disabled — saves ~$10/day in image token costs.
         # Claude identifies ICT setups from raw candle data alone.
         # To re-enable: set scanner_send_charts=True in config.
@@ -3704,7 +3708,7 @@ class ScannerEngine:
                         "content-type": "application/json",
                     },
                     json={
-                        "model": "claude-sonnet-4-20250514",
+                        "model": "claude-sonnet-4-5",
                         "max_tokens": 3000,
                         "temperature": 0,
                         "system": ICT_SYSTEM_MESSAGE,
