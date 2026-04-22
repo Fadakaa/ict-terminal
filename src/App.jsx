@@ -567,7 +567,7 @@ export default function App() {
         method: "POST", signal: abort.signal,
         headers: { "Content-Type": "application/json", "x-api-key": key.trim(), "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5", max_tokens: 5000, temperature: 0,
+          model: "claude-sonnet-4-6", max_tokens: 5000, temperature: 0,
           system: buildICTSystemMessage(),
           messages: [{ role: "user", content: prompt }],
         }),
