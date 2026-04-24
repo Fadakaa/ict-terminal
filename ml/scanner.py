@@ -632,7 +632,10 @@ class ScannerEngine:
                                          haiku_zone_hint=haiku_zone_hint,
                                          ml_context=ml_context)
             if not analysis:
-                self._last_error = f"Claude returned no result for {timeframe}"
+                # Preserve specific API error set inside _call_claude (e.g. 401, 400)
+                # Only fall back to generic message if no specific error was recorded
+                if not self._last_error:
+                    self._last_error = f"Claude returned no result for {timeframe}"
                 return {"status": "no_result"}
 
             # ── Save narrative state (even if no setup found) ──
@@ -2184,7 +2187,7 @@ class ScannerEngine:
                         "content-type": "application/json",
                     },
                     json={
-                        "model": "claude-opus-4-20250514",
+                        "model": "claude-opus-4-6",
                         "max_tokens": 800,
                         "temperature": 0,
                         "system": OPUS_NARRATIVE_SYSTEM,
@@ -2243,7 +2246,7 @@ class ScannerEngine:
                     from ml.cost_tracker import get_cost_tracker
                     usage = data.get("usage", {})
                     _cost = get_cost_tracker().log_call(
-                        "claude-opus-4-20250514",
+                        "claude-opus-4-6",
                         usage.get("input_tokens", 2000),
                         usage.get("output_tokens", 500),
                         "narrative")
@@ -2306,7 +2309,7 @@ class ScannerEngine:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-opus-4-20250514",
+                    "model": "claude-opus-4-6",
                     "max_tokens": 600,
                     "temperature": 0,
                     "system": OPUS_NARRATIVE_SYSTEM_RECAP,
@@ -2443,7 +2446,7 @@ class ScannerEngine:
                         "content-type": "application/json",
                     },
                     json={
-                        "model": "claude-opus-4-20250514",
+                        "model": "claude-opus-4-6",
                         "max_tokens": 1200,
                         "temperature": 0,
                         "system": OPUS_PROSPECT_SYSTEM,
@@ -3378,7 +3381,7 @@ class ScannerEngine:
                         "content-type": "application/json",
                     },
                     json={
-                        "model": "claude-opus-4-20250514",
+                        "model": "claude-opus-4-6",
                         "max_tokens": 500,
                         "temperature": 0,
                         "system": OPUS_VALIDATION_SYSTEM,
@@ -3718,7 +3721,9 @@ class ScannerEngine:
                 )
 
                 if resp.status_code == 401:
-                    logger.critical("Scanner: Claude API key invalid (401)")
+                    err_msg = "Claude API key invalid (401 Unauthorized)"
+                    logger.critical("Scanner: %s", err_msg)
+                    self._last_error = err_msg
                     return None
 
                 if resp.status_code in (429, 529):
@@ -3729,11 +3734,13 @@ class ScannerEngine:
                     continue
 
                 if resp.status_code != 200:
+                    err_detail = resp.text[:150].strip()
                     logger.error("Scanner: Claude API error %d: %s",
-                                 resp.status_code, resp.text[:200])
+                                 resp.status_code, err_detail)
                     if attempt < 2:
                         time.sleep(2 ** attempt * 2)
                         continue
+                    self._last_error = f"Claude API error {resp.status_code}: {err_detail}"
                     return None
 
                 data = resp.json()

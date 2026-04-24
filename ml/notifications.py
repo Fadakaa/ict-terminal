@@ -119,11 +119,21 @@ def record_daily_pnl(dollar_pnl: float):
     Persists to the daily_drawdown table so DD survives server restarts.
     Resets automatically at 8pm GMT (new trading day boundary).
     """
+    import math
     import sqlite3
+
+    if not isinstance(dollar_pnl, (int, float)) or math.isnan(dollar_pnl) or math.isinf(dollar_pnl):
+        logger.error("DD record rejected — invalid dollar_pnl: %r", dollar_pnl)
+        return
+
     trading_day = _get_trading_day()
 
     try:
         db_path = _get_dd_db_path()
+        if not db_path:
+            logger.error("DD record skipped — no db_path configured")
+            return
+
         with sqlite3.connect(db_path) as conn:
             row = conn.execute(
                 "SELECT trading_day, realised_pnl FROM daily_drawdown WHERE id = 1"
@@ -135,16 +145,28 @@ def record_daily_pnl(dollar_pnl: float):
                     "UPDATE daily_drawdown SET realised_pnl = realised_pnl + ?, "
                     "trade_count = trade_count + 1, updated_at = datetime('now') WHERE id = 1",
                     (dollar_pnl,))
-            else:
+            elif row:
                 # New trading day — reset and record
                 conn.execute(
                     "UPDATE daily_drawdown SET trading_day = ?, realised_pnl = ?, "
                     "trade_count = 1, updated_at = datetime('now') WHERE id = 1",
                     (trading_day, dollar_pnl))
+            else:
+                # Row missing entirely — insert it
+                conn.execute(
+                    "INSERT INTO daily_drawdown (id, trading_day, realised_pnl, trade_count) "
+                    "VALUES (1, ?, ?, 1)",
+                    (trading_day, dollar_pnl))
 
-            logger.info("DD recorded: $%.0f (trading day %s)", dollar_pnl, trading_day)
+            after = conn.execute(
+                "SELECT realised_pnl FROM daily_drawdown WHERE id = 1"
+            ).fetchone()
+            logger.info(
+                "DD recorded: $%+.0f → cumulative $%.0f (trading day %s)",
+                dollar_pnl, after[0] if after else 0, trading_day,
+            )
     except Exception as e:
-        logger.error("DD write to DB failed: %s", e)
+        logger.error("DD write to DB failed: %s (pnl=$%.0f)", e, dollar_pnl)
 
 
 def _calc_lot_size(entry: float, sl: float, balance: float = None,
@@ -831,12 +853,17 @@ def _build_stage_5(emoji, tf, setup_data, resolution_data, post_thesis):
         if cost_rr else f"Net: {net_rr:+.1f}R",
     ]
 
-    sl = d.get("calibrated_sl") or d.get("sl_price", 0)
+    sl = d.get("calibrated_sl") or d.get("sl_price") or 0
     lot = _calc_lot_size(entry, sl) if entry and sl else {"lot_size": 0, "risk_dollars": 0}
-    pnl_dollars = 0.0
+
+    # Decouple P&L from lot_size — risk_dollars is always computable
+    risk_dollars = lot.get("risk_dollars") or (ACCOUNT_BALANCE * RISK_PCT / 100)
+    pnl_dollars = net_rr * risk_dollars if net_rr else 0.0
+
     if lot["lot_size"]:
-        pnl_dollars = net_rr * lot["risk_dollars"]
         body_lines.append(f"P&L: ${pnl_dollars:+,.0f} | Lot: {lot['lot_size']}")
+    elif pnl_dollars:
+        body_lines.append(f"P&L: ${pnl_dollars:+,.0f}")
 
     # Track daily DD and show remaining budget
     if pnl_dollars:

@@ -17,10 +17,15 @@ logger = logging.getLogger(__name__)
 MODEL_PRICING = {
     "haiku": {"input": 0.25, "output": 1.25},
     "claude-3-5-haiku-20241022": {"input": 0.25, "output": 1.25},
+    "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
+    "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
     "sonnet": {"input": 3.0, "output": 15.0},
-    "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},  # legacy alias
     "opus": {"input": 15.0, "output": 75.0},
-    "claude-opus-4-20250514": {"input": 15.0, "output": 75.0},
+    "claude-opus-4-6": {"input": 5.0, "output": 25.0},
+    "claude-opus-4-7": {"input": 5.0, "output": 25.0},
+    "claude-opus-4-20250514": {"input": 15.0, "output": 75.0},  # legacy alias (opus-4-0)
 }
 
 
