@@ -4327,3 +4327,19 @@ class ScannerEngine:
         """Hash candle data for change detection."""
         raw = json.dumps([(c["datetime"], c["close"]) for c in candles[-5:]])
         return hashlib.md5(raw.encode()).hexdigest()[:12]
+
+
+# ── Shared singleton ──────────────────────────────────────────────────────────
+# Both server.py and scheduler.py must use this so they share one engine
+# instance. Having two separate instances means scheduler increments _total_scans
+# on one object while the status endpoint reads zero from the other.
+
+_shared_engine: ScannerEngine | None = None
+
+
+def get_shared_engine() -> ScannerEngine:
+    """Return the process-wide singleton ScannerEngine, creating it if needed."""
+    global _shared_engine
+    if _shared_engine is None:
+        _shared_engine = ScannerEngine()
+    return _shared_engine

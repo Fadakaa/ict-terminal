@@ -23,7 +23,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 logger = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
-_engine = None
 
 # Prospect schedule — 15 min before each killzone opens (UTC)
 PROSPECT_SCHEDULE_UTC = {
@@ -49,11 +48,9 @@ def _is_market_active() -> bool:
 
 
 def _get_engine():
-    global _engine
-    if _engine is None:
-        from ml.scanner import ScannerEngine
-        _engine = ScannerEngine()
-    return _engine
+    """Return the shared ScannerEngine singleton (same instance as server.py endpoints)."""
+    from ml.scanner import get_shared_engine
+    return get_shared_engine()
 
 
 async def _scan_job():

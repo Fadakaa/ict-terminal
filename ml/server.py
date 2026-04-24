@@ -898,15 +898,10 @@ def seed_stats():
 # Scanner Endpoints — headless background scanning
 # ═══════════════════════════════════════════════════════════════════════
 
-_scanner_engine = None
-
-
 def _get_scanner():
-    global _scanner_engine
-    if _scanner_engine is None:
-        from ml.scanner import ScannerEngine
-        _scanner_engine = ScannerEngine()
-    return _scanner_engine
+    """Return the shared ScannerEngine singleton (same instance as the scheduler)."""
+    from ml.scanner import get_shared_engine
+    return get_shared_engine()
 
 
 @app.get("/scanner/pending")
