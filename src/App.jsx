@@ -1825,6 +1825,7 @@ export default function App() {
             {scannerStatus.timeframes && row("Timeframes", scannerStatus.timeframes.join(", "))}
             {scannerStatus.last_scan && row("Last Scan", new Date(scannerStatus.last_scan).toLocaleTimeString())}
             {scannerStatus.total_scans != null && row("Total Scans", scannerStatus.total_scans)}
+            {scannerStatus.last_error && row("Last Error", scannerStatus.last_error, "#ef5350")}
           </div>
         )}
       </>
