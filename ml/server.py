@@ -1550,6 +1550,31 @@ def scanner_status():
     return status
 
 
+@app.post("/notify/test")
+def notify_test():
+    """Send a demo Telegram notification to verify credentials are working."""
+    import os
+    from datetime import datetime
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return {"status": "error", "error": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in environment"}
+    try:
+        from ml.notifications import _send_telegram_html
+        ts = datetime.utcnow().strftime("%H:%M:%S UTC")
+        text = (
+            "🟢 <b>ICT Terminal — Connection Test</b>\n\n"
+            f"Telegram notifications are working correctly.\n"
+            f"<i>Sent at {ts}</i>"
+        )
+        msg_id = _send_telegram_html(text)
+        if msg_id:
+            return {"status": "ok", "message_id": msg_id}
+        return {"status": "error", "error": "Telegram returned no message_id — check bot token and chat ID"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/scanner/trigger")
 def scanner_trigger(request: dict = None):
     """Manually trigger a scan cycle.
