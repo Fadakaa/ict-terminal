@@ -1552,27 +1552,50 @@ def scanner_status():
 
 @app.post("/notify/test")
 def notify_test():
-    """Send a demo Telegram notification to verify credentials are working."""
-    import os
+    """Send a demo Telegram notification — bypasses module-level constants,
+    reads env vars fresh, calls Telegram API directly so nothing is cached."""
+    import os, requests as _req
     from datetime import datetime
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        return {"status": "error", "error": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in environment"}
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+    # Report exactly what we have so misconfigs are obvious
+    diag = {
+        "token_set": bool(token),
+        "token_prefix": token[:10] + "..." if len(token) > 10 else token or "(empty)",
+        "chat_id_set": bool(chat_id),
+        "chat_id_value": chat_id or "(empty)",
+    }
+
+    if not token:
+        return {"status": "error", "error": "TELEGRAM_BOT_TOKEN not set in Railway env vars", "diag": diag}
+    if not chat_id:
+        return {"status": "error", "error": "TELEGRAM_CHAT_ID not set in Railway env vars", "diag": diag}
+
+    ts = datetime.utcnow().strftime("%H:%M UTC, %d %b %Y")
+    text = (
+        "🟢 <b>ICT Terminal — Connection Test</b>\n\n"
+        "Telegram notifications are working correctly.\n"
+        f"<i>{ts}</i>"
+    )
     try:
-        from ml.notifications import _send_telegram_html
-        ts = datetime.utcnow().strftime("%H:%M:%S UTC")
-        text = (
-            "🟢 <b>ICT Terminal — Connection Test</b>\n\n"
-            f"Telegram notifications are working correctly.\n"
-            f"<i>Sent at {ts}</i>"
+        resp = _req.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
         )
-        msg_id = _send_telegram_html(text)
-        if msg_id:
-            return {"status": "ok", "message_id": msg_id}
-        return {"status": "error", "error": "Telegram returned no message_id — check bot token and chat ID"}
+        data = resp.json()
+        if resp.ok and data.get("ok"):
+            return {"status": "ok", "message_id": data["result"]["message_id"], "diag": diag}
+        return {
+            "status": "error",
+            "error": f"Telegram API rejected: {data.get('description', resp.text[:200])}",
+            "telegram_error_code": data.get("error_code"),
+            "diag": diag,
+        }
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": str(e), "diag": diag}
 
 
 @app.post("/scanner/trigger")
