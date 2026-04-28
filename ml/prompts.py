@@ -59,6 +59,12 @@ def build_enhanced_ict_prompt(candles_1h: list, candles_4h: list,
         regime_context: Optional dict from classify_regime() with structural regime label,
                         confidence, and metrics (ATR percentile, vol ratio, net movement,
                         displacements, body consistency)
+        weekly_narrative: Optional Opus weekly macro narrative dict from _get_weekly_narrative().
+                         When provided without weekly_matched_level, injects full WEEKLY MACRO
+                         CONTEXT block. When provided with weekly_matched_level, injects condensed
+                         WEEKLY KEY LEVEL PROXIMITY block.
+        weekly_matched_level: Optional matched level dict from _is_near_weekly_level(). When set,
+                              switches the weekly block to condensed proximity mode.
 
     Returns:
         Complete prompt string for Claude
