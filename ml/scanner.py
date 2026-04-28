@@ -30,6 +30,41 @@ from ml.scanner_db import ScannerDB
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_load_claude_json(clean: str, source: str = "claude") -> dict:
+    """Parse JSON from a Claude response, recovering from common LLM
+    output errors via json_repair fallback.
+
+    Background — 2026-04-28: Sonnet 4.6 was producing JSON that strict
+    json.loads couldn't parse (failures around char 7000+ in long
+    analyses, 'Expecting , delimiter' at line ~115), most often because
+    the model embedded an unescaped quote or literal newline inside a
+    long narrative string field. The structure was logically intact —
+    just unparseable to a strict parser.
+
+    Strict json.loads runs first so clean responses cost nothing extra.
+    json_repair only kicks in on failure. If repair also fails we
+    re-raise the original JSONDecodeError so callers' existing error
+    handling fires with their regular message.
+    """
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        try:
+            from json_repair import repair_json
+        except ImportError:
+            # json_repair not installed — re-raise so caller logs the
+            # original parse error and we know to deploy the dep.
+            raise
+        repaired = repair_json(clean, return_objects=True)
+        if isinstance(repaired, dict) and repaired:
+            logger.info("Scanner: %s JSON repaired via json_repair "
+                        "(strict parse failed, recovered)", source)
+            return repaired
+        # repair_json returns "" or [] on hopeless input — re-raise the
+        # original error so the caller's _last_error captures the snippet.
+        raise
+
 ICT_SYSTEM_MESSAGE = """You are an elite ICT (Inner Circle Trader) analyst specialising in XAU/USD (Gold). You follow Michael J. Huddleston's ICT methodology precisely.
 
 Core ICT Principles You Apply:
@@ -2230,7 +2265,7 @@ class ScannerEngine:
                 if json_start >= 0 and json_end > json_start:
                     clean = clean[json_start:json_end + 1]
 
-                narrative = json.loads(clean)
+                narrative = _safe_load_claude_json(clean, "opus_narrative")
 
                 # Validate required fields
                 if not narrative.get("directional_bias"):
@@ -2342,7 +2377,7 @@ class ScannerEngine:
             if json_start >= 0 and json_end > json_start:
                 clean = clean[json_start:json_end + 1]
 
-            recap_json = json.loads(clean)
+            recap_json = _safe_load_claude_json(clean, "opus_recap")
             self.db.store_session_recap(ending_killzone, today, recap_json)
             logger.info("Session recap stored: %s on %s — %s",
                         ending_killzone, today,
@@ -2485,7 +2520,7 @@ class ScannerEngine:
                 if json_start >= 0 and json_end > json_start:
                     clean = clean[json_start:json_end + 1]
 
-                prospect = json.loads(clean)
+                prospect = _safe_load_claude_json(clean, "opus_prospect")
                 setups = prospect.get("conditional_setups", [])
 
                 if not setups:
@@ -3297,7 +3332,7 @@ class ScannerEngine:
             json_end = clean.rfind("}")
             if json_start >= 0 and json_end > json_start:
                 clean = clean[json_start:json_end + 1]
-            return json.loads(clean)
+            return _safe_load_claude_json(clean, "opus_validate")
 
         except Exception as e:
             logger.warning("Sonnet short call failed: %s", e)
@@ -3425,7 +3460,7 @@ class ScannerEngine:
                 if json_start >= 0 and json_end > json_start:
                     clean = clean[json_start:json_end + 1]
 
-                result = json.loads(clean)
+                result = _safe_load_claude_json(clean, "opus_validate")
 
                 # Validate the response structure
                 verdict = result.get("verdict", "")
@@ -3767,7 +3802,7 @@ class ScannerEngine:
                 if json_start >= 0 and json_end > json_start:
                     clean = clean[json_start:json_end + 1]
 
-                result = json.loads(clean)
+                result = _safe_load_claude_json(clean, f"sonnet[{timeframe}]")
 
                 # Log cost
                 try:
