@@ -38,7 +38,9 @@ def build_enhanced_ict_prompt(candles_1h: list, candles_4h: list,
                               regime_context: dict | None = None,
                               ml_context: dict | None = None,
                               htf_label: str | None = None,
-                              key_levels: dict | None = None) -> str:
+                              key_levels: dict | None = None,
+                              weekly_narrative: dict | None = None,
+                              weekly_matched_level: dict | None = None) -> str:
     """Build the enhanced multi-timeframe ICT analysis prompt.
 
     Args:
@@ -120,12 +122,46 @@ IMPORTANT: The senior analyst has provided the above higher-timeframe reading fr
 
 """
 
+    # Build weekly macro context block
+    weekly_block = ""
+    if weekly_narrative:
+        wn = weekly_narrative
+        dr = wn.get("dealing_range", {})
+        if weekly_matched_level:
+            # Condensed proximity mode — 4H/1H/15min when near a weekly level
+            lvl = weekly_matched_level
+            weekly_block = (
+                f"WEEKLY KEY LEVEL PROXIMITY — price is approaching a significant weekly structural level:\n"
+                f"Level: {lvl.get('label', '?')} at {lvl.get('price', '?')} (role: {lvl.get('role', '?')})\n"
+                f"Weekly Macro Bias: {wn.get('directional_bias', '?')} "
+                f"(confidence: {wn.get('bias_confidence', 0):.0%})\n"
+                f"Weight your entry criteria accordingly. This weekly level may act as institutional support/resistance.\n\n"
+            )
+        else:
+            # Full mode — 1day always gets the complete weekly context
+            weekly_block = (
+                f"WEEKLY MACRO CONTEXT (authoritative macro framework — your analysis must be consistent with "
+                f"this or explicitly explain any divergence):\n"
+                f"Macro Thesis: {wn.get('macro_thesis', '?')}\n"
+                f"Directional Bias: {wn.get('directional_bias', '?')} "
+                f"(confidence: {wn.get('bias_confidence', 0):.0%})\n"
+                f"Power of 3 Phase: {wn.get('p3_phase', '?')}\n"
+                f"Dealing Range: {dr.get('high', '?')} \u2013 {dr.get('low', '?')} "
+                f"(equilibrium: {dr.get('equilibrium', '?')})\n"
+                f"Premium Array: {json.dumps(wn.get('premium_array', []))}\n"
+                f"Discount Array: {json.dumps(wn.get('discount_array', []))}\n"
+                f"Key Levels: {json.dumps(wn.get('key_levels', []))}\n"
+                f"Invalidation: {wn.get('bias_invalidation', {}).get('condition', '?')} \u2014 "
+                f"level: {wn.get('bias_invalidation', {}).get('price_level', '?')} "
+                f"({wn.get('bias_invalidation', {}).get('direction', '?')})\n\n"
+            )
+
     return f"""You are an expert ICT (Inner Circle Trader) analyst for Gold XAU/USD.
 
 CURRENT TIME: {time_str} ({day_str})
 CURRENT KILLZONE: {current_kz}
 
-{narrative_block}{"Analyse these candles to identify the highest-probability trade setup. The senior analyst has provided the HTF narrative above — use it as your directional framework but VERIFY it against the 4H candles below. If your 4H reading contradicts the narrative, flag it." if htf_narrative else "Analyse these candles on TWO timeframes to identify the highest-probability trade setup."}
+{weekly_block}{narrative_block}{"Analyse these candles to identify the highest-probability trade setup. The senior analyst has provided the HTF narrative above — use it as your directional framework but VERIFY it against the 4H candles below. If your 4H reading contradicts the narrative, flag it." if htf_narrative else "Analyse these candles on TWO timeframes to identify the highest-probability trade setup."}
 
 {((htf_label or "4H") + " CANDLES (" + str(len(h4_slim)) + " candles — verify the HTF narrative against these):" + chr(10) + json.dumps(h4_slim) + chr(10) if h4_slim else "")}
 EXECUTION CANDLES ({len(h1_slim)} candles):
