@@ -2326,12 +2326,11 @@ class ScannerEngine:
         """Return True if the weekly narrative cache needs regeneration."""
         if self._weekly_narrative_cache is None or self._weekly_narrative_fetched_at is None:
             return True
-        age_seconds = (datetime.utcnow() - self._weekly_narrative_fetched_at).total_seconds()
-        if age_seconds > 7 * 24 * 3600:
-            return True
-        # Stale if fetched in a different ISO week (handles server restarts mid-week)
         now = datetime.utcnow()
         fetched = self._weekly_narrative_fetched_at
+        if (now - fetched).total_seconds() > 7 * 24 * 3600:
+            return True
+        # Stale if fetched in a different ISO week (handles server restarts mid-week)
         if now.year != fetched.year or now.isocalendar()[1] != fetched.isocalendar()[1]:
             return True
         return False
