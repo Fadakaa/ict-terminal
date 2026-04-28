@@ -2426,11 +2426,12 @@ class ScannerEngine:
                 try:
                     from ml.cost_tracker import get_cost_tracker
                     usage = data.get("usage", {})
-                    get_cost_tracker().log_call(
+                    _cost = get_cost_tracker().log_call(
                         "claude-opus-4-6",
                         usage.get("input_tokens", 1500),
                         usage.get("output_tokens", 400),
                         "weekly_narrative")
+                    self._pending_api_cost += _cost  # P8
                 except Exception:
                     pass
 
@@ -2439,10 +2440,21 @@ class ScannerEngine:
                             narrative.get("p3_phase", "?"))
                 return narrative
 
-            except Exception as e:
-                logger.warning("Opus weekly narrative attempt %d failed: %s", attempt + 1, e)
+            except json.JSONDecodeError as e:
+                logger.error("Opus weekly narrative JSON parse error (attempt %d): %s", attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2)
+                    continue
+                return None
+            except httpx.TimeoutException:
+                logger.error("Opus weekly narrative timeout (attempt %d)", attempt + 1)
                 if attempt < 2:
                     time.sleep(2 ** attempt * 2)
+                    continue
+                return None
+            except Exception as e:
+                logger.error("Opus weekly narrative failed: %s", e)
+                return None
 
         return None
 

@@ -227,8 +227,15 @@ class TestGetWeeklyNarrative:
 
     def test_calls_opus_when_stale(self):
         from unittest.mock import patch
+        from datetime import datetime
         fresh_narrative = {"directional_bias": "bearish", "macro_thesis": "Selling."}
         engine = self._make_scanner_with_cache()  # cache=None → stale
-        with patch.object(engine, "_call_opus_weekly_narrative", return_value=fresh_narrative) as mock_call:
+
+        def _set_cache():
+            engine._weekly_narrative_cache = fresh_narrative
+            engine._weekly_narrative_fetched_at = datetime.utcnow()
+
+        with patch.object(engine, "_call_opus_weekly_narrative", side_effect=_set_cache) as mock_call:
             result = engine._get_weekly_narrative()
         mock_call.assert_called_once()
+        assert result == fresh_narrative
