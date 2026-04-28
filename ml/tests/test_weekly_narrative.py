@@ -198,3 +198,37 @@ class TestIsNearWeeklyLevel:
         levels = [{"label": "PWH", "role": "resistance"}]  # no price key
         near, matched = engine._is_near_weekly_level(3380.0, 5.0, levels)
         assert near is False
+
+
+class TestGetWeeklyNarrative:
+
+    def _make_scanner_with_cache(self, cache=None, fetched_at=None):
+        from unittest.mock import patch
+        from datetime import datetime
+        from ml.scanner import ScannerEngine
+        engine = ScannerEngine.__new__(ScannerEngine)
+        engine._weekly_narrative_cache = cache
+        engine._weekly_narrative_fetched_at = fetched_at or (datetime.utcnow() if cache else None)
+        return engine
+
+    def test_returns_none_when_call_fails_and_no_cache(self):
+        from unittest.mock import patch
+        engine = self._make_scanner_with_cache()
+        with patch.object(engine, "_call_opus_weekly_narrative", return_value=None):
+            result = engine._get_weekly_narrative()
+        assert result is None
+
+    def test_returns_cached_when_fresh(self):
+        from datetime import datetime
+        cached = {"directional_bias": "bullish", "macro_thesis": "Gold is going up."}
+        engine = self._make_scanner_with_cache(cache=cached, fetched_at=datetime.utcnow())
+        result = engine._get_weekly_narrative()
+        assert result is cached
+
+    def test_calls_opus_when_stale(self):
+        from unittest.mock import patch
+        fresh_narrative = {"directional_bias": "bearish", "macro_thesis": "Selling."}
+        engine = self._make_scanner_with_cache()  # cache=None → stale
+        with patch.object(engine, "_call_opus_weekly_narrative", return_value=fresh_narrative) as mock_call:
+            result = engine._get_weekly_narrative()
+        mock_call.assert_called_once()

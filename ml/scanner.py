@@ -2348,6 +2348,113 @@ class ScannerEngine:
                 return True, level
         return False, None
 
+    def _call_opus_weekly_narrative(self) -> dict | None:
+        """Call Opus to generate the weekly macro narrative. Caches result for 7 days.
+
+        Returns structured weekly narrative dict or None on failure.
+        Cost: ~$0.05/call, called at most once per week (Sunday close clears cache).
+        """
+        from ml.prompts import build_opus_weekly_narrative_prompt, OPUS_WEEKLY_SYSTEM
+
+        weekly_candles = self._get_htf_candles("1week", 24)
+        daily_candles = self._get_htf_candles("1day", 20)
+
+        if not weekly_candles:
+            logger.warning("Weekly narrative: no weekly candles available from OANDA")
+            return None
+
+        prompt = build_opus_weekly_narrative_prompt(weekly_candles, daily_candles)
+
+        for attempt in range(3):
+            try:
+                resp = httpx.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": self.claude_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-opus-4-6",
+                        "max_tokens": 600,
+                        "temperature": 0,
+                        "system": OPUS_WEEKLY_SYSTEM,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                    timeout=90,
+                )
+
+                if resp.status_code in (429, 529):
+                    wait = (2 ** attempt) * 2
+                    logger.warning("Opus weekly narrative rate limited, waiting %ds", wait)
+                    time.sleep(wait)
+                    continue
+
+                if resp.status_code != 200:
+                    logger.error("Opus weekly narrative API error %d: %s",
+                                 resp.status_code, resp.text[:200])
+                    if attempt < 2:
+                        time.sleep(2 ** attempt * 2)
+                        continue
+                    return None
+
+                data = resp.json()
+                text = ""
+                for block in data.get("content", []):
+                    if block.get("type") == "text":
+                        text = block["text"]
+                        break
+
+                if not text:
+                    return None
+
+                clean = text.replace("```json", "").replace("```", "").strip()
+                json_start = clean.find("{")
+                json_end = clean.rfind("}")
+                if json_start >= 0 and json_end > json_start:
+                    clean = clean[json_start:json_end + 1]
+
+                narrative = _safe_load_claude_json(clean, "opus_weekly_narrative")
+
+                if not narrative.get("directional_bias"):
+                    logger.warning("Weekly narrative missing directional_bias — discarding")
+                    return None
+
+                self._weekly_narrative_cache = narrative
+                self._weekly_narrative_fetched_at = datetime.utcnow()
+
+                try:
+                    from ml.cost_tracker import get_cost_tracker
+                    usage = data.get("usage", {})
+                    get_cost_tracker().log_call(
+                        "claude-opus-4-6",
+                        usage.get("input_tokens", 1500),
+                        usage.get("output_tokens", 400),
+                        "weekly_narrative")
+                except Exception:
+                    pass
+
+                logger.info("Opus weekly narrative: %s bias, %s P3 phase",
+                            narrative.get("directional_bias"),
+                            narrative.get("p3_phase", "?"))
+                return narrative
+
+            except Exception as e:
+                logger.warning("Opus weekly narrative attempt %d failed: %s", attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2 ** attempt * 2)
+
+        return None
+
+    def _get_weekly_narrative(self) -> dict | None:
+        """Return weekly narrative from cache, regenerating if stale."""
+        if self._is_weekly_cache_stale():
+            try:
+                self._call_opus_weekly_narrative()
+            except Exception as e:
+                logger.warning("Weekly narrative call failed: %s", e)
+        return self._weekly_narrative_cache
+
     def _generate_session_recap(self, ending_killzone: str):
         """Generate an Opus session recap when a killzone ends.
 
