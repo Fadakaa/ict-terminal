@@ -5,6 +5,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from ml.env_utils import sanitize_env_secret
+
 # Load .env before reading any env vars
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 
@@ -151,10 +153,11 @@ _DEFAULT_CONFIG = {
     "spread_cost_rr": 0.05,
     "kelly_fraction": 0.5,
     "management_tracker_min_trades": 30,
-    # Data providers
-    "oanda_account_id": os.getenv("OANDA_ACCOUNT_ID", ""),
-    "oanda_access_token": os.getenv("OANDA_ACCESS_TOKEN", ""),
-    "td_api_key": os.getenv("TWELVE_DATA_API_KEY", ""),
+    # Data providers — sanitize_env_secret strips invisible Unicode that
+    # would otherwise corrupt the OANDA Authorization header.
+    "oanda_account_id": sanitize_env_secret(os.getenv("OANDA_ACCOUNT_ID")),
+    "oanda_access_token": sanitize_env_secret(os.getenv("OANDA_ACCESS_TOKEN")),
+    "td_api_key": sanitize_env_secret(os.getenv("TWELVE_DATA_API_KEY")),
     "backtest_data_source": "oanda",
 }
 

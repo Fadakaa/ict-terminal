@@ -27,11 +27,15 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 
 from ml.config import get_config
+from ml.env_utils import sanitize_env_secret
 
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# Telegram bot token is embedded in the API URL (api.telegram.org/bot<TOKEN>/...)
+# which goes through the same ASCII encoding path as HTTP headers — invisible
+# Unicode in the env var would crash the request. See ml/env_utils.py.
+TELEGRAM_TOKEN = sanitize_env_secret(os.getenv("TELEGRAM_BOT_TOKEN"))
+TELEGRAM_CHAT_ID = sanitize_env_secret(os.getenv("TELEGRAM_CHAT_ID"))
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     logger.warning("Telegram credentials missing — check .env for TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")

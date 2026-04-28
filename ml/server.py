@@ -1556,9 +1556,12 @@ def notify_test():
     reads env vars fresh, calls Telegram API directly so nothing is cached."""
     import os, requests as _req
     from datetime import datetime
+    from ml.env_utils import sanitize_env_secret
 
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    # Use sanitize_env_secret rather than .strip() — strips invisible
+    # Unicode separators that survive .strip() and crash header/URL encoding.
+    token = sanitize_env_secret(os.environ.get("TELEGRAM_BOT_TOKEN"))
+    chat_id = sanitize_env_secret(os.environ.get("TELEGRAM_CHAT_ID"))
 
     # Report exactly what we have so misconfigs are obvious
     diag = {
@@ -1786,7 +1789,8 @@ def snapshot_prompt_context(days: int = 14):
 @app.post("/restore/db")
 async def admin_restore_db(request: Request):
     """Upload local scanner.db to the Railway Volume. Protected by ADMIN_SECRET."""
-    secret = os.environ.get("ADMIN_SECRET", "")
+    from ml.env_utils import sanitize_env_secret  # see env_utils docstring
+    secret = sanitize_env_secret(os.environ.get("ADMIN_SECRET"))
     if not secret or request.headers.get("X-Admin-Secret") != secret:
         raise HTTPException(status_code=403, detail="Forbidden")
     body = await request.body()
@@ -1805,7 +1809,8 @@ async def admin_restore_db(request: Request):
 @app.post("/restore/file/{filename}")
 async def admin_restore_file(filename: str, request: Request):
     """Upload a JSON/CSV file to the models directory. Protected by ADMIN_SECRET."""
-    secret = os.environ.get("ADMIN_SECRET", "")
+    from ml.env_utils import sanitize_env_secret  # see env_utils docstring
+    secret = sanitize_env_secret(os.environ.get("ADMIN_SECRET"))
     if not secret or request.headers.get("X-Admin-Secret") != secret:
         raise HTTPException(status_code=403, detail="Forbidden")
     import re

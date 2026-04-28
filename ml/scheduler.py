@@ -373,8 +373,10 @@ def start_scheduler():
     global _scheduler
 
     from ml.config import get_config
+    from ml.env_utils import sanitize_env_secret
     cfg = get_config()
-    claude_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    # See ml/env_utils.py — strips invisible Unicode that breaks header encoding.
+    claude_key = sanitize_env_secret(os.environ.get("ANTHROPIC_API_KEY"))
     oanda_ok = bool(cfg.get("oanda_account_id") and cfg.get("oanda_access_token"))
 
     if not oanda_ok or not claude_key:

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 import httpx
 
 from ml.config import get_config
+from ml.env_utils import sanitize_env_secret
 from ml.notifications import (
     notify_new_setup,
     notify_setup_detected, notify_entry_missed,
@@ -87,7 +88,10 @@ class ScannerEngine:
     """Multi-timeframe headless scanner with candle-change detection."""
 
     def __init__(self, db: ScannerDB = None):
-        self.claude_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        # sanitize_env_secret strips invisible Unicode (U+2028/U+2029, ZWSP, BOM,
+        # CR/LF) that survive copy-paste into Railway's Variables UI and would
+        # otherwise crash httpx header encoding.
+        self.claude_key = sanitize_env_secret(os.environ.get("ANTHROPIC_API_KEY"))
         self.db = db or ScannerDB()
         # Priority 5: Haiku false negative tracker (shares scanner.db)
         from ml.haiku_fn_tracker import HaikuFNTracker

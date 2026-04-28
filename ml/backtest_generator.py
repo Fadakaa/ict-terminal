@@ -360,7 +360,8 @@ class BacktestGenerator:
                 "Intermarket fetch failed: %s — continuing without", e
             )
 
-        claude_key = os.getenv("ANTHROPIC_API_KEY", "")
+        from ml.env_utils import sanitize_env_secret  # see module docstring
+        claude_key = sanitize_env_secret(os.getenv("ANTHROPIC_API_KEY"))
         tracker = get_cost_tracker()
         bridge = ClaudeAnalysisBridge(config=self.cfg)
         dataset_mgr = TrainingDatasetManager(config=self.cfg)
