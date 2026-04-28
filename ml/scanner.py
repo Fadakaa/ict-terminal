@@ -3755,7 +3755,10 @@ class ScannerEngine:
                         break
 
                 if not text:
+                    # Surface the actual reason in _last_error so /scanner/status
+                    # tells the truth instead of "Claude returned no result".
                     logger.warning("Scanner: Claude returned empty response")
+                    self._last_error = f"Claude returned empty response for {timeframe}"
                     return None
 
                 clean = text.replace("```json", "").replace("```", "").strip()
@@ -3784,15 +3787,27 @@ class ScannerEngine:
                 if attempt < 2:
                     time.sleep(2)
                     continue
+                # Capture a snippet of the bad payload so we can see what
+                # Sonnet actually returned (truncated JSON? prose? unicode?)
+                _snippet = (clean[:200] if "clean" in dir() else text[:200]) if "text" in dir() else ""
+                self._last_error = (
+                    f"Claude JSON parse error for {timeframe}: {e}"
+                    + (f" | first 200 chars: {_snippet!r}" if _snippet else "")
+                )
                 return None
             except httpx.TimeoutException:
                 logger.error("Scanner: Claude API timeout (attempt %d)", attempt + 1)
                 if attempt < 2:
                     time.sleep(2 ** attempt * 2)
                     continue
+                self._last_error = f"Claude API timeout for {timeframe} after 3 attempts"
                 return None
             except Exception as e:
                 logger.error("Scanner: Claude call failed: %s", e)
+                self._last_error = (
+                    f"Claude call exception for {timeframe}: "
+                    f"{type(e).__name__}: {str(e)[:200]}"
+                )
                 return None
 
         return None
