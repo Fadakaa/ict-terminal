@@ -75,3 +75,42 @@ class TestWeeklyPromptBlocks:
             weekly_narrative=_WEEKLY_NARRATIVE,
         )
         assert "Weekly close above 3500" in prompt
+
+
+class TestBuildOpusWeeklyNarrativePrompt:
+
+    def test_function_exists_and_returns_string(self):
+        from ml.prompts import build_opus_weekly_narrative_prompt
+        candles = _make_candles(24)
+        result = build_opus_weekly_narrative_prompt(candles, _make_candles(20))
+        assert isinstance(result, str)
+
+    def test_prompt_contains_weekly_candles(self):
+        from ml.prompts import build_opus_weekly_narrative_prompt
+        result = build_opus_weekly_narrative_prompt(_make_candles(24), _make_candles(20))
+        assert "WEEKLY CANDLES" in result
+
+    def test_prompt_contains_daily_candles(self):
+        from ml.prompts import build_opus_weekly_narrative_prompt
+        result = build_opus_weekly_narrative_prompt(_make_candles(24), _make_candles(20))
+        assert "DAILY CANDLES" in result
+
+    def test_prompt_contains_json_schema(self):
+        from ml.prompts import build_opus_weekly_narrative_prompt
+        result = build_opus_weekly_narrative_prompt(_make_candles(24), _make_candles(20))
+        assert "macro_thesis" in result
+        assert "dealing_range" in result
+        assert "premium_array" in result
+        assert "discount_array" in result
+        assert "bias_invalidation" in result
+
+    def test_prompt_works_without_daily_candles(self):
+        from ml.prompts import build_opus_weekly_narrative_prompt
+        result = build_opus_weekly_narrative_prompt(_make_candles(24), None)
+        assert isinstance(result, str)
+        assert "WEEKLY CANDLES" in result
+
+    def test_system_constant_exists(self):
+        from ml.prompts import OPUS_WEEKLY_SYSTEM
+        assert isinstance(OPUS_WEEKLY_SYSTEM, str)
+        assert len(OPUS_WEEKLY_SYSTEM) > 50

@@ -1496,3 +1496,66 @@ def _slim_candles(candles: list) -> list:
             "c": round(float(c.get("close", 0)), 2),
         })
     return slim
+
+
+OPUS_WEEKLY_SYSTEM = """You are a senior ICT (Inner Circle Trader) macro analyst specialising in XAU/USD.
+Your role is to identify the weekly-level institutional dealing range, Power of 3 phase, and key structural levels that define the macro environment for the coming week(s).
+
+Focus on positional, not execution. Return ONLY valid JSON. No commentary, no markdown."""
+
+
+def build_opus_weekly_narrative_prompt(weekly_candles: list,
+                                        daily_candles: list | None = None,
+                                        intermarket: dict | None = None) -> str:
+    """Build prompt for Opus weekly macro narrative.
+
+    Args:
+        weekly_candles: Last 24 weekly candles (~6 months of macro context)
+        daily_candles: Last 20 daily candles for macro anchoring (optional)
+        intermarket: Intermarket context dict (optional)
+
+    Returns:
+        Complete weekly narrative prompt string
+    """
+    weekly_slim = _slim_candles(weekly_candles[-24:]) if weekly_candles else []
+    daily_slim = _slim_candles(daily_candles[-20:]) if daily_candles else []
+
+    now_utc = datetime.now(timezone.utc)
+    time_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
+    day_str = now_utc.strftime("%A")
+
+    daily_block = ""
+    if daily_slim:
+        daily_block = f"""DAILY CANDLES (last {len(daily_slim)} — macro anchoring):
+{json.dumps(daily_slim)}
+
+"""
+
+    intermarket_block = _build_intermarket_section(intermarket) if intermarket else ""
+
+    return f"""Provide the WEEKLY MACRO NARRATIVE for XAU/USD.
+Time: {time_str} ({day_str})
+
+WEEKLY CANDLES (last {len(weekly_slim)} — ~{len(weekly_slim) * 7 // 30} months):
+{json.dumps(weekly_slim)}
+
+{daily_block}{intermarket_block}ANALYSIS (macro/positional — not execution):
+1. QUARTERLY BIAS: Identify the dominant swing high and low over the past 3-6 months. Is price in institutional premium (upper half) or discount (lower half) of this weekly dealing range?
+2. POWER OF 3 PHASE (weekly): Has weekly-level accumulation completed (stop runs below multi-week lows)? Is manipulation occurring (false breaks of range extremes)? Has distribution begun (sustained sell pressure after sweep)?
+3. KEY WEEKLY LEVELS: Identify Previous Weekly Highs/Lows, significant weekly Order Blocks, weekly Fair Value Gaps, and quarterly highs/lows. Label each with its role (resistance/support/magnet/void).
+4. PREMIUM ARRAY: List significant supply levels above current price where institutions are likely selling (weekly OBs, swept BSL zones, FVG tops).
+5. DISCOUNT ARRAY: List significant demand levels below current price where institutions are likely buying (weekly OBs, swept SSL zones, FVG bottoms).
+6. BIAS INVALIDATION: What single price event would flip the weekly directional bias?
+
+Return ONLY valid JSON:
+{{
+  "macro_thesis": "string — 1-2 sentences on the dominant weekly narrative",
+  "directional_bias": "bullish|bearish|neutral",
+  "bias_confidence": 0.0,
+  "p3_phase": "accumulation|manipulation|distribution",
+  "dealing_range": {{"high": 0.0, "low": 0.0, "equilibrium": 0.0}},
+  "premium_array": [{{"price": 0.0, "label": "string", "role": "resistance|magnet|void"}}],
+  "discount_array": [{{"price": 0.0, "label": "string", "role": "support|magnet|void"}}],
+  "key_levels": [{{"price": 0.0, "label": "string", "role": "resistance|support|magnet"}}],
+  "bias_invalidation": {{"condition": "string", "price_level": 0.0, "direction": "above|below"}}
+}}"""
