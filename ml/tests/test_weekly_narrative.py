@@ -239,3 +239,55 @@ class TestGetWeeklyNarrative:
             result = engine._get_weekly_narrative()
         mock_call.assert_called_once()
         assert result == fresh_narrative
+
+
+class TestWeeklyInjectionInScanTimeframe:
+    """Verify weekly narrative is passed through _call_claude correctly."""
+
+    _WEEKLY_NR = {
+        "macro_thesis": "Gold bearish weekly.",
+        "directional_bias": "bearish",
+        "bias_confidence": 0.8,
+        "p3_phase": "distribution",
+        "dealing_range": {"high": 3500.0, "low": 3100.0, "equilibrium": 3300.0},
+        "premium_array": [{"price": 3450.0, "label": "Weekly OB", "role": "resistance"}],
+        "discount_array": [],
+        "key_levels": [{"price": 3380.0, "label": "PWH", "role": "resistance"}],
+        "bias_invalidation": {"condition": "Close above 3500", "price_level": 3500.0, "direction": "above"},
+    }
+
+    def test_call_claude_accepts_weekly_narrative_param(self):
+        """_call_claude signature must accept weekly_narrative and weekly_matched_level."""
+        import inspect
+        from ml.scanner import ScannerEngine
+        sig = inspect.signature(ScannerEngine._call_claude)
+        assert "weekly_narrative" in sig.parameters
+        assert "weekly_matched_level" in sig.parameters
+
+    def test_build_enhanced_ict_prompt_called_with_weekly_narrative(self):
+        from unittest.mock import patch, MagicMock
+        from ml.scanner import ScannerEngine
+
+        engine = MagicMock(spec=ScannerEngine)
+        engine.claude_key = "test-key"
+        engine._pending_api_cost = 0.0
+
+        candles = [{"datetime": f"2026-04-{i+1:02d}", "open": 3300.0, "high": 3305.0,
+                    "low": 3295.0, "close": 3302.0} for i in range(10)]
+
+        with patch("ml.scanner.build_enhanced_ict_prompt", return_value="test prompt") as mock_prompt, \
+             patch("ml.scanner.httpx.post") as mock_post:
+            mock_post.return_value = MagicMock(
+                status_code=200,
+                json=lambda: {"content": [{"type": "text", "text": '{"bias": "bearish"}'}],
+                              "usage": {"input_tokens": 100, "output_tokens": 50}}
+            )
+            ScannerEngine._call_claude(
+                engine, candles, [], "1day",
+                weekly_narrative=self._WEEKLY_NR,
+                weekly_matched_level=None,
+            )
+
+        call_kwargs = mock_prompt.call_args[1]
+        assert call_kwargs.get("weekly_narrative") == self._WEEKLY_NR
+        assert call_kwargs.get("weekly_matched_level") is None

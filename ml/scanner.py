@@ -25,7 +25,7 @@ from ml.notifications import (
     notify_new_setup,
     notify_setup_detected, notify_entry_missed,
 )
-from ml.prompts import get_current_killzone
+from ml.prompts import build_enhanced_ict_prompt, get_current_killzone
 from ml.scanner_db import ScannerDB
 
 logger = logging.getLogger(__name__)
@@ -496,6 +496,38 @@ class ScannerEngine:
                 logger.warning("Scanner [%s]: Opus narrative failed (proceeding without): %s",
                                timeframe, e)
 
+            # Weekly macro context — 7-day cache, injected based on timeframe + proximity
+            weekly_narrative = None
+            weekly_matched_level = None
+            try:
+                _wn = self._get_weekly_narrative()
+                if _wn:
+                    if timeframe == "1day":
+                        weekly_narrative = _wn
+                    else:
+                        _all_weekly_levels = (
+                            _wn.get("key_levels", []) +
+                            _wn.get("premium_array", []) +
+                            _wn.get("discount_array", [])
+                        )
+                        _current_price = candles[-1]["close"] if candles else 0.0
+                        _atr = (sum(c["high"] - c["low"] for c in candles[-14:]) / 14
+                                if len(candles) >= 14 else 0.0)
+                        _near, _matched = self._is_near_weekly_level(
+                            _current_price, _atr, _all_weekly_levels)
+                        if _near:
+                            weekly_narrative = _wn
+                            weekly_matched_level = _matched
+                            logger.info(
+                                "Scanner [%s]: weekly level proximity — %s at %.2f",
+                                timeframe,
+                                _matched.get("label", "?"),
+                                _matched.get("price", 0.0),
+                            )
+            except Exception as e:
+                logger.warning("Scanner [%s]: weekly narrative retrieval failed: %s",
+                               timeframe, e)
+
             # Extract watch zones from Opus response for Haiku context.
             # Prefer explicit watch_zones field (Phase 3); fall back to key_levels.
             _watch_zones = None
@@ -673,7 +705,9 @@ class ScannerEngine:
                                          invalidation_status=invalidation_status,
                                          recent_context=recent_context,
                                          haiku_zone_hint=haiku_zone_hint,
-                                         ml_context=ml_context)
+                                         ml_context=ml_context,
+                                         weekly_narrative=weekly_narrative,
+                                         weekly_matched_level=weekly_matched_level)
             if not analysis:
                 # Preserve specific API error set inside _call_claude (e.g. 401, 400)
                 # Only fall back to generic message if no specific error was recorded
@@ -3771,7 +3805,9 @@ class ScannerEngine:
                      invalidation_status: str | None = None,
                      recent_context: dict | None = None,
                      haiku_zone_hint: str | None = None,
-                     ml_context: dict | None = None) -> dict | None:
+                     ml_context: dict | None = None,
+                     weekly_narrative: dict | None = None,
+                     weekly_matched_level: dict | None = None) -> dict | None:
         """Call Claude API with enhanced ICT prompt + chart image + intermarket + narrative."""
         # Budget check
         try:
@@ -3781,8 +3817,6 @@ class ScannerEngine:
                 return None
         except Exception:
             pass
-
-        from ml.prompts import build_enhanced_ict_prompt
 
         # Always send full candle windows — Sonnet needs to verify Opus, not just trust it.
         # Previously compressed mode stripped 4H candles and halved execution candles
@@ -3835,7 +3869,9 @@ class ScannerEngine:
             regime_context=_regime_ctx,
             ml_context=ml_context,
             htf_label=htf_tf,
-            key_levels=_key_levels)
+            key_levels=_key_levels,
+            weekly_narrative=weekly_narrative,
+            weekly_matched_level=weekly_matched_level)
         # Prepend timeframe context so Claude knows what it's analyzing
         tf_note = f"You are analyzing {timeframe} candles for XAU/USD. "
         if htf_candles:
