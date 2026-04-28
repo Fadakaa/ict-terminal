@@ -114,3 +114,87 @@ class TestBuildOpusWeeklyNarrativePrompt:
         from ml.prompts import OPUS_WEEKLY_SYSTEM
         assert isinstance(OPUS_WEEKLY_SYSTEM, str)
         assert len(OPUS_WEEKLY_SYSTEM) > 50
+
+
+class TestWeeklyCacheStale:
+
+    def _make_scanner(self):
+        """Return a scanner instance with mocked dependencies."""
+        from ml.scanner import ScannerEngine
+        engine = ScannerEngine.__new__(ScannerEngine)
+        engine._weekly_narrative_cache = None
+        engine._weekly_narrative_fetched_at = None
+        return engine
+
+    def test_stale_when_cache_none(self):
+        from ml.scanner import ScannerEngine
+        engine = self._make_scanner()
+        assert engine._is_weekly_cache_stale() is True
+
+    def test_stale_when_fetched_at_none(self):
+        engine = self._make_scanner()
+        engine._weekly_narrative_cache = {"directional_bias": "bullish"}
+        engine._weekly_narrative_fetched_at = None
+        assert engine._is_weekly_cache_stale() is True
+
+    def test_stale_when_older_than_7_days(self):
+        from datetime import datetime, timedelta
+        engine = self._make_scanner()
+        engine._weekly_narrative_cache = {"directional_bias": "bullish"}
+        engine._weekly_narrative_fetched_at = datetime.utcnow() - timedelta(days=8)
+        assert engine._is_weekly_cache_stale() is True
+
+    def test_fresh_when_fetched_this_week_and_recent(self):
+        from datetime import datetime
+        engine = self._make_scanner()
+        engine._weekly_narrative_cache = {"directional_bias": "bullish"}
+        engine._weekly_narrative_fetched_at = datetime.utcnow()
+        assert engine._is_weekly_cache_stale() is False
+
+
+class TestIsNearWeeklyLevel:
+
+    def _make_scanner(self):
+        from ml.scanner import ScannerEngine
+        engine = ScannerEngine.__new__(ScannerEngine)
+        return engine
+
+    def test_near_level_returns_true_and_level(self):
+        engine = self._make_scanner()
+        levels = [{"price": 3380.0, "label": "PWH", "role": "resistance"}]
+        near, matched = engine._is_near_weekly_level(3370.0, 5.0, levels)  # 10 pts away = 2 ATR
+        assert near is True
+        assert matched["price"] == 3380.0
+
+    def test_far_from_level_returns_false(self):
+        engine = self._make_scanner()
+        levels = [{"price": 3380.0, "label": "PWH", "role": "resistance"}]
+        near, matched = engine._is_near_weekly_level(3200.0, 5.0, levels)  # 180 pts = 36 ATR
+        assert near is False
+        assert matched is None
+
+    def test_exactly_at_threshold_returns_true(self):
+        engine = self._make_scanner()
+        levels = [{"price": 3380.0, "label": "PWH", "role": "resistance"}]
+        # 3 ATR = 15 pts at ATR=5; price at 3380-15=3365 is exactly at boundary
+        near, matched = engine._is_near_weekly_level(3365.0, 5.0, levels)
+        assert near is True
+
+    def test_empty_levels_returns_false(self):
+        engine = self._make_scanner()
+        near, matched = engine._is_near_weekly_level(3380.0, 5.0, [])
+        assert near is False
+        assert matched is None
+
+    def test_zero_atr_returns_false(self):
+        engine = self._make_scanner()
+        levels = [{"price": 3380.0, "label": "PWH", "role": "resistance"}]
+        near, matched = engine._is_near_weekly_level(3380.0, 0.0, levels)
+        assert near is False
+        assert matched is None
+
+    def test_level_missing_price_key_skipped(self):
+        engine = self._make_scanner()
+        levels = [{"label": "PWH", "role": "resistance"}]  # no price key
+        near, matched = engine._is_near_weekly_level(3380.0, 5.0, levels)
+        assert near is False

@@ -192,6 +192,10 @@ class ScannerEngine:
         # Adaptive trigger polling
         self._last_trigger_check = datetime.min
 
+        # Weekly macro narrative cache — 7-day TTL, cleared on weekly close (Sunday 21:00 UTC)
+        self._weekly_narrative_cache: dict | None = None
+        self._weekly_narrative_fetched_at: datetime | None = None
+
         # Prospect regeneration tracking (resets daily via killzone transition)
         self._prospect_regen_count = {}  # {killzone: int}
         self._prospect_regen_date = None  # date string for daily reset
@@ -2317,6 +2321,33 @@ class ScannerEngine:
                 return None
 
         return None
+
+    def _is_weekly_cache_stale(self) -> bool:
+        """Return True if the weekly narrative cache needs regeneration."""
+        if self._weekly_narrative_cache is None or self._weekly_narrative_fetched_at is None:
+            return True
+        age_seconds = (datetime.utcnow() - self._weekly_narrative_fetched_at).total_seconds()
+        if age_seconds > 7 * 24 * 3600:
+            return True
+        # Stale if fetched in a different ISO week (handles server restarts mid-week)
+        now = datetime.utcnow()
+        fetched = self._weekly_narrative_fetched_at
+        if now.year != fetched.year or now.isocalendar()[1] != fetched.isocalendar()[1]:
+            return True
+        return False
+
+    def _is_near_weekly_level(self, price: float, atr: float,
+                               weekly_levels: list) -> tuple[bool, dict | None]:
+        """Return (True, matched_level) if price is within 3×ATR of any weekly level."""
+        if not weekly_levels or atr <= 0:
+            return False, None
+        for level in weekly_levels:
+            level_price = level.get("price")
+            if level_price is None:
+                continue
+            if abs(price - level_price) <= 3.0 * atr:
+                return True, level
+        return False, None
 
     def _generate_session_recap(self, ending_killzone: str):
         """Generate an Opus session recap when a killzone ends.
