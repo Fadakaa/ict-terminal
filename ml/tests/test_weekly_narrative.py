@@ -291,3 +291,38 @@ class TestWeeklyInjectionInScanTimeframe:
         call_kwargs = mock_prompt.call_args[1]
         assert call_kwargs.get("weekly_narrative") == self._WEEKLY_NR
         assert call_kwargs.get("weekly_matched_level") is None
+
+
+class TestWeeklySchedulerJob:
+
+    def test_weekly_job_registered_in_scheduler(self):
+        """Verify the weekly cache clear job is registered on Sunday 21:00 UTC."""
+        from unittest.mock import patch, MagicMock
+        import importlib
+        import ml.scheduler
+
+        added_jobs = []
+
+        def capture_add_job(fn, trigger, **kwargs):
+            added_jobs.append({"fn": fn, "trigger": trigger, "kwargs": kwargs})
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.add_job.side_effect = capture_add_job
+
+        # Reload first to get a clean module state, then apply patches and call
+        importlib.reload(ml.scheduler)
+
+        with patch("ml.scheduler.AsyncIOScheduler", return_value=mock_scheduler), \
+             patch("ml.scheduler.os.environ.get", return_value="fake-key"), \
+             patch("ml.scheduler.get_config", return_value={
+                 "oanda_account_id": "x", "oanda_access_token": "y"}):
+            from ml.scheduler import start_scheduler as start_scheduler_fresh
+            start_scheduler_fresh()
+
+        job_ids = [j["kwargs"].get("id") for j in added_jobs]
+        assert "weekly_cache_clear" in job_ids
+
+        weekly_job = next(j for j in added_jobs if j["kwargs"].get("id") == "weekly_cache_clear")
+        assert weekly_job["kwargs"].get("day_of_week") == "sun"
+        assert weekly_job["kwargs"].get("hour") == 21
+        assert weekly_job["kwargs"].get("minute") == 0
