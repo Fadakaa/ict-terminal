@@ -402,6 +402,7 @@ class TestWeeklyNarrativeEndpoints:
             resp = client.post("/weekly/refresh")
 
         assert resp.status_code == 200
+        assert resp.json()["directional_bias"] == "bullish"
         mock_engine._call_opus_weekly_narrative.assert_called_once()
 
     def test_post_weekly_refresh_500_when_opus_fails(self):

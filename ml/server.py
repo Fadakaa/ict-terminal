@@ -1734,14 +1734,13 @@ def get_weekly_narrative():
 
     Returns 404 if not yet generated — POST /weekly/refresh to generate.
     """
-    from fastapi import HTTPException
     from datetime import datetime, timedelta
 
     engine = _get_scanner()
-    cache = getattr(engine, "_weekly_narrative_cache", None)
-    fetched_at = getattr(engine, "_weekly_narrative_fetched_at", None)
+    cache = engine._weekly_narrative_cache
+    fetched_at = engine._weekly_narrative_fetched_at
 
-    if not cache:
+    if cache is None:
         raise HTTPException(
             status_code=404,
             detail="Weekly narrative not yet generated. POST /weekly/refresh to generate."
@@ -1772,8 +1771,6 @@ def refresh_weekly_narrative():
 
     Returns the fresh narrative or 500 if Opus call failed.
     """
-    from fastapi import HTTPException
-
     engine = _get_scanner()
     engine._weekly_narrative_cache = None
     engine._weekly_narrative_fetched_at = None
