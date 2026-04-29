@@ -195,6 +195,7 @@ class ScannerEngine:
         # Weekly macro narrative cache — 7-day TTL, cleared on weekly close (Sunday 21:00 UTC)
         self._weekly_narrative_cache: dict | None = None
         self._weekly_narrative_fetched_at: datetime | None = None
+        self._pending_api_cost: float = 0.0
 
         # Prospect regeneration tracking (resets daily via killzone transition)
         self._prospect_regen_count = {}  # {killzone: int}
@@ -2081,7 +2082,7 @@ class ScannerEngine:
             # candles after midnight to be dropped — the same bug that was
             # fixed in server.py /candles endpoint.
             interval_hours = {"5min": 0.083, "15min": 0.25, "30min": 0.5,
-                              "1h": 1, "4h": 4, "1day": 24}
+                              "1h": 1, "4h": 4, "1day": 24, "1week": 168}
             hours_back = count * interval_hours.get(interval, 1) * 1.5  # 1.5x buffer
             start = (datetime.utcnow() - timedelta(hours=hours_back)).strftime("%Y-%m-%dT%H:%M:%S")
             end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
@@ -2410,7 +2411,7 @@ class ScannerEngine:
                     },
                     json={
                         "model": "claude-opus-4-6",
-                        "max_tokens": 600,
+                        "max_tokens": 800,
                         "temperature": 0,
                         "system": OPUS_WEEKLY_SYSTEM,
                         "messages": [{"role": "user", "content": prompt}],
