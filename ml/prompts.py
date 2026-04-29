@@ -38,7 +38,9 @@ def build_enhanced_ict_prompt(candles_1h: list, candles_4h: list,
                               regime_context: dict | None = None,
                               ml_context: dict | None = None,
                               htf_label: str | None = None,
-                              key_levels: dict | None = None) -> str:
+                              key_levels: dict | None = None,
+                              weekly_narrative: dict | None = None,
+                              weekly_matched_level: dict | None = None) -> str:
     """Build the enhanced multi-timeframe ICT analysis prompt.
 
     Args:
@@ -57,6 +59,12 @@ def build_enhanced_ict_prompt(candles_1h: list, candles_4h: list,
         regime_context: Optional dict from classify_regime() with structural regime label,
                         confidence, and metrics (ATR percentile, vol ratio, net movement,
                         displacements, body consistency)
+        weekly_narrative: Optional Opus weekly macro narrative dict from _get_weekly_narrative().
+                         When provided without weekly_matched_level, injects full WEEKLY MACRO
+                         CONTEXT block. When provided with weekly_matched_level, injects condensed
+                         WEEKLY KEY LEVEL PROXIMITY block.
+        weekly_matched_level: Optional matched level dict from _is_near_weekly_level(). When set,
+                              switches the weekly block to condensed proximity mode.
 
     Returns:
         Complete prompt string for Claude
@@ -120,12 +128,46 @@ IMPORTANT: The senior analyst has provided the above higher-timeframe reading fr
 
 """
 
+    # Build weekly macro context block
+    weekly_block = ""
+    if weekly_narrative:
+        wn = weekly_narrative
+        dr = wn.get("dealing_range", {})
+        if weekly_matched_level:
+            # Condensed proximity mode — 4H/1H/15min when near a weekly level
+            lvl = weekly_matched_level
+            weekly_block = (
+                f"WEEKLY KEY LEVEL PROXIMITY — price is approaching a significant weekly structural level:\n"
+                f"Level: {lvl.get('label', '?')} at {lvl.get('price', '?')} (role: {lvl.get('role', '?')})\n"
+                f"Weekly Macro Bias: {wn.get('directional_bias', '?')} "
+                f"(confidence: {wn.get('bias_confidence', 0):.0%})\n"
+                f"Weight your entry criteria accordingly. This weekly level may act as institutional support/resistance.\n\n"
+            )
+        else:
+            # Full mode — 1day always gets the complete weekly context
+            weekly_block = (
+                f"WEEKLY MACRO CONTEXT (authoritative macro framework — your analysis must be consistent with "
+                f"this or explicitly explain any divergence):\n"
+                f"Macro Thesis: {wn.get('macro_thesis', '?')}\n"
+                f"Directional Bias: {wn.get('directional_bias', '?')} "
+                f"(confidence: {wn.get('bias_confidence', 0):.0%})\n"
+                f"Power of 3 Phase: {wn.get('p3_phase', '?')}\n"
+                f"Dealing Range: {dr.get('high', '?')} \u2013 {dr.get('low', '?')} "
+                f"(equilibrium: {dr.get('equilibrium', '?')})\n"
+                f"Premium Array: {json.dumps(wn.get('premium_array', []))}\n"
+                f"Discount Array: {json.dumps(wn.get('discount_array', []))}\n"
+                f"Key Levels: {json.dumps(wn.get('key_levels', []))}\n"
+                f"Invalidation: {wn.get('bias_invalidation', {}).get('condition', '?')} \u2014 "
+                f"level: {wn.get('bias_invalidation', {}).get('price_level', '?')} "
+                f"({wn.get('bias_invalidation', {}).get('direction', '?')})\n\n"
+            )
+
     return f"""You are an expert ICT (Inner Circle Trader) analyst for Gold XAU/USD.
 
 CURRENT TIME: {time_str} ({day_str})
 CURRENT KILLZONE: {current_kz}
 
-{narrative_block}{"Analyse these candles to identify the highest-probability trade setup. The senior analyst has provided the HTF narrative above — use it as your directional framework but VERIFY it against the 4H candles below. If your 4H reading contradicts the narrative, flag it." if htf_narrative else "Analyse these candles on TWO timeframes to identify the highest-probability trade setup."}
+{weekly_block}{narrative_block}{"Analyse these candles to identify the highest-probability trade setup. The senior analyst has provided the HTF narrative above — use it as your directional framework but VERIFY it against the 4H candles below. If your 4H reading contradicts the narrative, flag it." if htf_narrative else "Analyse these candles on TWO timeframes to identify the highest-probability trade setup."}
 
 {((htf_label or "4H") + " CANDLES (" + str(len(h4_slim)) + " candles — verify the HTF narrative against these):" + chr(10) + json.dumps(h4_slim) + chr(10) if h4_slim else "")}
 EXECUTION CANDLES ({len(h1_slim)} candles):
@@ -1454,3 +1496,66 @@ def _slim_candles(candles: list) -> list:
             "c": round(float(c.get("close", 0)), 2),
         })
     return slim
+
+
+OPUS_WEEKLY_SYSTEM = """You are a senior ICT (Inner Circle Trader) macro analyst specialising in XAU/USD.
+Your role is to identify the weekly-level institutional dealing range, Power of 3 phase, and key structural levels that define the macro environment for the coming week(s).
+
+Focus on positional, not execution. Return ONLY valid JSON. No commentary, no markdown."""
+
+
+def build_opus_weekly_narrative_prompt(weekly_candles: list,
+                                        daily_candles: list | None = None,
+                                        intermarket: dict | None = None) -> str:
+    """Build prompt for Opus weekly macro narrative.
+
+    Args:
+        weekly_candles: Last 24 weekly candles (~6 months of macro context)
+        daily_candles: Last 20 daily candles for macro anchoring (optional)
+        intermarket: Intermarket context dict (optional)
+
+    Returns:
+        Complete weekly narrative prompt string
+    """
+    weekly_slim = _slim_candles(weekly_candles[-24:]) if weekly_candles else []
+    daily_slim = _slim_candles(daily_candles[-20:]) if daily_candles else []
+
+    now_utc = datetime.now(timezone.utc)
+    time_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
+    day_str = now_utc.strftime("%A")
+
+    daily_block = ""
+    if daily_slim:
+        daily_block = f"""DAILY CANDLES (last {len(daily_slim)} — macro anchoring):
+{json.dumps(daily_slim)}
+
+"""
+
+    intermarket_block = _build_intermarket_section(intermarket) if intermarket else ""
+
+    return f"""Provide the WEEKLY MACRO NARRATIVE for XAU/USD.
+Time: {time_str} ({day_str})
+
+WEEKLY CANDLES (last {len(weekly_slim)} — ~{len(weekly_slim) * 7 // 30} months):
+{json.dumps(weekly_slim)}
+
+{daily_block}{intermarket_block}ANALYSIS (macro/positional — not execution):
+1. QUARTERLY BIAS: Identify the dominant swing high and low over the past 3-6 months. Is price in institutional premium (upper half) or discount (lower half) of this weekly dealing range?
+2. POWER OF 3 PHASE (weekly): Has weekly-level accumulation completed (stop runs below multi-week lows)? Is manipulation occurring (false breaks of range extremes)? Has distribution begun (sustained sell pressure after sweep)?
+3. KEY WEEKLY LEVELS: Identify Previous Weekly Highs/Lows, significant weekly Order Blocks, weekly Fair Value Gaps, and quarterly highs/lows. Label each with its role (resistance/support/magnet/void).
+4. PREMIUM ARRAY: List significant supply levels above current price where institutions are likely selling (weekly OBs, swept BSL zones, FVG tops).
+5. DISCOUNT ARRAY: List significant demand levels below current price where institutions are likely buying (weekly OBs, swept SSL zones, FVG bottoms).
+6. BIAS INVALIDATION: What single price event would flip the weekly directional bias?
+
+Return ONLY valid JSON:
+{{
+  "macro_thesis": "string — 1-2 sentences on the dominant weekly narrative",
+  "directional_bias": "bullish|bearish|neutral",
+  "bias_confidence": 0.0,
+  "p3_phase": "accumulation|manipulation|distribution",
+  "dealing_range": {{"high": 0.0, "low": 0.0, "equilibrium": 0.0}},
+  "premium_array": [{{"price": 0.0, "label": "string", "role": "resistance|magnet|void"}}],
+  "discount_array": [{{"price": 0.0, "label": "string", "role": "support|magnet|void"}}],
+  "key_levels": [{{"price": 0.0, "label": "string", "role": "resistance|support|magnet"}}],
+  "bias_invalidation": {{"condition": "string", "price_level": 0.0, "direction": "above|below"}}
+}}"""

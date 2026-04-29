@@ -25,7 +25,7 @@ from ml.notifications import (
     notify_new_setup,
     notify_setup_detected, notify_entry_missed,
 )
-from ml.prompts import get_current_killzone
+from ml.prompts import build_enhanced_ict_prompt, get_current_killzone
 from ml.scanner_db import ScannerDB
 
 logger = logging.getLogger(__name__)
@@ -191,6 +191,11 @@ class ScannerEngine:
 
         # Adaptive trigger polling
         self._last_trigger_check = datetime.min
+
+        # Weekly macro narrative cache — 7-day TTL, cleared on weekly close (Sunday 21:00 UTC)
+        self._weekly_narrative_cache: dict | None = None
+        self._weekly_narrative_fetched_at: datetime | None = None
+        self._pending_api_cost: float = 0.0
 
         # Prospect regeneration tracking (resets daily via killzone transition)
         self._prospect_regen_count = {}  # {killzone: int}
@@ -492,6 +497,38 @@ class ScannerEngine:
                 logger.warning("Scanner [%s]: Opus narrative failed (proceeding without): %s",
                                timeframe, e)
 
+            # Weekly macro context — 7-day cache, injected based on timeframe + proximity
+            weekly_narrative = None
+            weekly_matched_level = None
+            try:
+                _wn = self._get_weekly_narrative()
+                if _wn:
+                    if timeframe == "1day":
+                        weekly_narrative = _wn
+                    else:
+                        _all_weekly_levels = (
+                            _wn.get("key_levels", []) +
+                            _wn.get("premium_array", []) +
+                            _wn.get("discount_array", [])
+                        )
+                        _current_price = candles[-1]["close"] if candles else 0.0
+                        _atr = (sum(c["high"] - c["low"] for c in candles[-14:]) / 14
+                                if len(candles) >= 14 else 0.0)
+                        _near, _matched = self._is_near_weekly_level(
+                            _current_price, _atr, _all_weekly_levels)
+                        if _near:
+                            weekly_narrative = _wn
+                            weekly_matched_level = _matched
+                            logger.info(
+                                "Scanner [%s]: weekly level proximity — %s at %.2f",
+                                timeframe,
+                                _matched.get("label", "?"),
+                                _matched.get("price", 0.0),
+                            )
+            except Exception as e:
+                logger.warning("Scanner [%s]: weekly narrative retrieval failed: %s",
+                               timeframe, e)
+
             # Extract watch zones from Opus response for Haiku context.
             # Prefer explicit watch_zones field (Phase 3); fall back to key_levels.
             _watch_zones = None
@@ -669,7 +706,9 @@ class ScannerEngine:
                                          invalidation_status=invalidation_status,
                                          recent_context=recent_context,
                                          haiku_zone_hint=haiku_zone_hint,
-                                         ml_context=ml_context)
+                                         ml_context=ml_context,
+                                         weekly_narrative=weekly_narrative,
+                                         weekly_matched_level=weekly_matched_level)
             if not analysis:
                 # Preserve specific API error set inside _call_claude (e.g. 401, 400)
                 # Only fall back to generic message if no specific error was recorded
@@ -2043,7 +2082,7 @@ class ScannerEngine:
             # candles after midnight to be dropped — the same bug that was
             # fixed in server.py /candles endpoint.
             interval_hours = {"5min": 0.083, "15min": 0.25, "30min": 0.5,
-                              "1h": 1, "4h": 4, "1day": 24}
+                              "1h": 1, "4h": 4, "1day": 24, "1week": 168}
             hours_back = count * interval_hours.get(interval, 1) * 1.5  # 1.5x buffer
             start = (datetime.utcnow() - timedelta(hours=hours_back)).strftime("%Y-%m-%dT%H:%M:%S")
             end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
@@ -2317,6 +2356,151 @@ class ScannerEngine:
                 return None
 
         return None
+
+    def _is_weekly_cache_stale(self) -> bool:
+        """Return True if the weekly narrative cache needs regeneration."""
+        if self._weekly_narrative_cache is None or self._weekly_narrative_fetched_at is None:
+            return True
+        now = datetime.utcnow()
+        fetched = self._weekly_narrative_fetched_at
+        if (now - fetched).total_seconds() > 7 * 24 * 3600:
+            return True
+        # Stale if fetched in a different ISO week (handles server restarts mid-week)
+        if now.year != fetched.year or now.isocalendar()[1] != fetched.isocalendar()[1]:
+            return True
+        return False
+
+    def _is_near_weekly_level(self, price: float, atr: float,
+                               weekly_levels: list) -> tuple[bool, dict | None]:
+        """Return (True, matched_level) if price is within 3×ATR of any weekly level."""
+        if not weekly_levels or atr <= 0:
+            return False, None
+        for level in weekly_levels:
+            level_price = level.get("price")
+            if level_price is None:
+                continue
+            if abs(price - level_price) <= 3.0 * atr:
+                return True, level
+        return False, None
+
+    def _call_opus_weekly_narrative(self) -> dict | None:
+        """Call Opus to generate the weekly macro narrative. Caches result for 7 days.
+
+        Returns structured weekly narrative dict or None on failure.
+        Cost: ~$0.05/call, called at most once per week (Sunday close clears cache).
+        """
+        from ml.prompts import build_opus_weekly_narrative_prompt, OPUS_WEEKLY_SYSTEM
+
+        weekly_candles = self._get_htf_candles("1week", 24)
+        daily_candles = self._get_htf_candles("1day", 20)
+
+        if not weekly_candles:
+            logger.warning("Weekly narrative: no weekly candles available from OANDA")
+            return None
+
+        prompt = build_opus_weekly_narrative_prompt(weekly_candles, daily_candles)
+
+        for attempt in range(3):
+            try:
+                resp = httpx.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": self.claude_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-opus-4-6",
+                        "max_tokens": 800,
+                        "temperature": 0,
+                        "system": OPUS_WEEKLY_SYSTEM,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                    timeout=90,
+                )
+
+                if resp.status_code in (429, 529):
+                    wait = (2 ** attempt) * 2
+                    logger.warning("Opus weekly narrative rate limited, waiting %ds", wait)
+                    time.sleep(wait)
+                    continue
+
+                if resp.status_code != 200:
+                    logger.error("Opus weekly narrative API error %d: %s",
+                                 resp.status_code, resp.text[:200])
+                    if attempt < 2:
+                        time.sleep(2 ** attempt * 2)
+                        continue
+                    return None
+
+                data = resp.json()
+                text = ""
+                for block in data.get("content", []):
+                    if block.get("type") == "text":
+                        text = block["text"]
+                        break
+
+                if not text:
+                    return None
+
+                clean = text.replace("```json", "").replace("```", "").strip()
+                json_start = clean.find("{")
+                json_end = clean.rfind("}")
+                if json_start >= 0 and json_end > json_start:
+                    clean = clean[json_start:json_end + 1]
+
+                narrative = _safe_load_claude_json(clean, "opus_weekly_narrative")
+
+                if not narrative.get("directional_bias"):
+                    logger.warning("Weekly narrative missing directional_bias — discarding")
+                    return None
+
+                self._weekly_narrative_cache = narrative
+                self._weekly_narrative_fetched_at = datetime.utcnow()
+
+                try:
+                    from ml.cost_tracker import get_cost_tracker
+                    usage = data.get("usage", {})
+                    _cost = get_cost_tracker().log_call(
+                        "claude-opus-4-6",
+                        usage.get("input_tokens", 1500),
+                        usage.get("output_tokens", 400),
+                        "weekly_narrative")
+                    self._pending_api_cost += _cost  # P8
+                except Exception:
+                    pass
+
+                logger.info("Opus weekly narrative: %s bias, %s P3 phase",
+                            narrative.get("directional_bias"),
+                            narrative.get("p3_phase", "?"))
+                return narrative
+
+            except json.JSONDecodeError as e:
+                logger.error("Opus weekly narrative JSON parse error (attempt %d): %s", attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2)
+                    continue
+                return None
+            except httpx.TimeoutException:
+                logger.error("Opus weekly narrative timeout (attempt %d)", attempt + 1)
+                if attempt < 2:
+                    time.sleep(2 ** attempt * 2)
+                    continue
+                return None
+            except Exception as e:
+                logger.error("Opus weekly narrative failed: %s", e)
+                return None
+
+        return None
+
+    def _get_weekly_narrative(self) -> dict | None:
+        """Return weekly narrative from cache, regenerating if stale."""
+        if self._is_weekly_cache_stale():
+            try:
+                self._call_opus_weekly_narrative()
+            except Exception as e:
+                logger.warning("Weekly narrative call failed: %s", e)
+        return self._weekly_narrative_cache
 
     def _generate_session_recap(self, ending_killzone: str):
         """Generate an Opus session recap when a killzone ends.
@@ -3622,7 +3806,9 @@ class ScannerEngine:
                      invalidation_status: str | None = None,
                      recent_context: dict | None = None,
                      haiku_zone_hint: str | None = None,
-                     ml_context: dict | None = None) -> dict | None:
+                     ml_context: dict | None = None,
+                     weekly_narrative: dict | None = None,
+                     weekly_matched_level: dict | None = None) -> dict | None:
         """Call Claude API with enhanced ICT prompt + chart image + intermarket + narrative."""
         # Budget check
         try:
@@ -3632,8 +3818,6 @@ class ScannerEngine:
                 return None
         except Exception:
             pass
-
-        from ml.prompts import build_enhanced_ict_prompt
 
         # Always send full candle windows — Sonnet needs to verify Opus, not just trust it.
         # Previously compressed mode stripped 4H candles and halved execution candles
@@ -3686,7 +3870,9 @@ class ScannerEngine:
             regime_context=_regime_ctx,
             ml_context=ml_context,
             htf_label=htf_tf,
-            key_levels=_key_levels)
+            key_levels=_key_levels,
+            weekly_narrative=weekly_narrative,
+            weekly_matched_level=weekly_matched_level)
         # Prepend timeframe context so Claude knows what it's analyzing
         tf_note = f"You are analyzing {timeframe} candles for XAU/USD. "
         if htf_candles:

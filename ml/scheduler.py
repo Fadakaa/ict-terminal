@@ -19,6 +19,7 @@ import os
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from ml.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -368,11 +369,27 @@ async def _recompute_intermarket_job():
         logger.error("Intermarket recompute failed: %s", e, exc_info=True)
 
 
+async def _weekly_cache_clear_job():
+    """Clear weekly narrative cache on Sunday 21:00 UTC (weekly candle close).
+
+    The scanner will regenerate the narrative on the next scan after close.
+    """
+    try:
+        from ml.scanner import get_shared_engine
+        engine = get_shared_engine()
+        engine._weekly_narrative_cache = None
+        engine._weekly_narrative_fetched_at = None
+        logger.info("Weekly narrative cache cleared — will regenerate on next scan")
+        print("[WEEKLY] Cache cleared at Sunday 21:00 UTC — will regenerate on next 1day scan")
+    except Exception as e:
+        print(f"[WEEKLY] Cache clear failed: {e}")
+        logger.error("Weekly cache clear failed: %s", e, exc_info=True)
+
+
 def start_scheduler():
     """Start the scanner scheduler. Only if API keys are configured."""
     global _scheduler
 
-    from ml.config import get_config
     from ml.env_utils import sanitize_env_secret
     cfg = get_config()
     # See ml/env_utils.py — strips invisible Unicode that breaks header encoding.
@@ -442,6 +459,14 @@ def start_scheduler():
             _recompute_intermarket_job, "cron",
             hour="*/6", minute=55, day_of_week="mon-fri",
             id="intermarket_recompute",
+            replace_existing=True,
+        )
+
+        # Clear weekly narrative cache on Sunday 21:00 UTC (weekly candle close)
+        _scheduler.add_job(
+            _weekly_cache_clear_job, "cron",
+            day_of_week="sun", hour=21, minute=0,
+            id="weekly_cache_clear",
             replace_existing=True,
         )
 
