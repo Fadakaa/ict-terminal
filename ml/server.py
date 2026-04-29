@@ -1726,6 +1726,68 @@ def context_recent(timeframe: str = "1h"):
     return ctx
 
 
+# ── Weekly HTF Narrative endpoints ───────────────────────────────
+
+@app.get("/weekly/narrative")
+def get_weekly_narrative():
+    """Return current weekly macro narrative from Opus cache.
+
+    Returns 404 if not yet generated — POST /weekly/refresh to generate.
+    """
+    from fastapi import HTTPException
+    from datetime import datetime, timedelta
+
+    engine = _get_scanner()
+    cache = getattr(engine, "_weekly_narrative_cache", None)
+    fetched_at = getattr(engine, "_weekly_narrative_fetched_at", None)
+
+    if not cache:
+        raise HTTPException(
+            status_code=404,
+            detail="Weekly narrative not yet generated. POST /weekly/refresh to generate."
+        )
+
+    now = datetime.utcnow()
+    days_until_sunday = (6 - now.weekday()) % 7
+    if days_until_sunday == 0 and now.hour >= 21:
+        days_until_sunday = 7
+    next_sunday = (now + timedelta(days=days_until_sunday)).replace(
+        hour=21, minute=0, second=0, microsecond=0)
+
+    cache_age_hours = (
+        round((now - fetched_at).total_seconds() / 3600, 1) if fetched_at else None
+    )
+
+    return {
+        **cache,
+        "last_updated": fetched_at.isoformat() if fetched_at else None,
+        "next_refresh": next_sunday.isoformat(),
+        "cache_age_hours": cache_age_hours,
+    }
+
+
+@app.post("/weekly/refresh")
+def refresh_weekly_narrative():
+    """Clear the weekly narrative cache and regenerate immediately via Opus.
+
+    Returns the fresh narrative or 500 if Opus call failed.
+    """
+    from fastapi import HTTPException
+
+    engine = _get_scanner()
+    engine._weekly_narrative_cache = None
+    engine._weekly_narrative_fetched_at = None
+
+    result = engine._call_opus_weekly_narrative()
+    if not result:
+        raise HTTPException(
+            status_code=500,
+            detail="Opus weekly narrative call failed — check logs for details."
+        )
+
+    return get_weekly_narrative()
+
+
 # ── System Evolution Snapshot endpoints ──────────────────────────
 
 @app.post("/snapshot/take")

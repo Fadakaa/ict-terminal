@@ -326,3 +326,96 @@ class TestWeeklySchedulerJob:
         assert weekly_job["kwargs"].get("day_of_week") == "sun"
         assert weekly_job["kwargs"].get("hour") == 21
         assert weekly_job["kwargs"].get("minute") == 0
+
+
+class TestWeeklyNarrativeEndpoints:
+
+    def test_get_weekly_narrative_404_when_no_cache(self):
+        from unittest.mock import patch, MagicMock
+        from fastapi.testclient import TestClient
+        from ml.server import app
+
+        mock_engine = MagicMock()
+        mock_engine._weekly_narrative_cache = None
+
+        with patch("ml.server._get_scanner", return_value=mock_engine):
+            client = TestClient(app)
+            resp = client.get("/weekly/narrative")
+
+        assert resp.status_code == 404
+        assert "POST /weekly/refresh" in resp.json()["detail"]
+
+    def test_get_weekly_narrative_200_with_cache(self):
+        from unittest.mock import patch, MagicMock
+        from datetime import datetime
+        from fastapi.testclient import TestClient
+        from ml.server import app
+
+        cache = {
+            "macro_thesis": "Gold bearish.", "directional_bias": "bearish",
+            "bias_confidence": 0.75, "p3_phase": "distribution",
+            "dealing_range": {"high": 3500.0, "low": 3100.0, "equilibrium": 3300.0},
+            "premium_array": [], "discount_array": [], "key_levels": [],
+            "bias_invalidation": {"condition": "Close above 3500", "price_level": 3500.0, "direction": "above"},
+        }
+        mock_engine = MagicMock()
+        mock_engine._weekly_narrative_cache = cache
+        mock_engine._weekly_narrative_fetched_at = datetime.utcnow()
+
+        with patch("ml.server._get_scanner", return_value=mock_engine):
+            client = TestClient(app)
+            resp = client.get("/weekly/narrative")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["directional_bias"] == "bearish"
+        assert "last_updated" in body
+        assert "next_refresh" in body
+        assert "cache_age_hours" in body
+
+    def test_post_weekly_refresh_triggers_call(self):
+        from unittest.mock import patch, MagicMock
+        from datetime import datetime
+        from fastapi.testclient import TestClient
+        from ml.server import app
+
+        fresh = {
+            "macro_thesis": "Gold now bullish.", "directional_bias": "bullish",
+            "bias_confidence": 0.6, "p3_phase": "accumulation",
+            "dealing_range": {"high": 3500.0, "low": 3100.0, "equilibrium": 3300.0},
+            "premium_array": [], "discount_array": [], "key_levels": [],
+            "bias_invalidation": {"condition": "Close below 3100", "price_level": 3100.0, "direction": "below"},
+        }
+        mock_engine = MagicMock()
+        mock_engine._weekly_narrative_cache = None
+        mock_engine._weekly_narrative_fetched_at = None
+
+        def side_effect():
+            mock_engine._weekly_narrative_cache = fresh
+            mock_engine._weekly_narrative_fetched_at = datetime.utcnow()
+            return fresh
+
+        mock_engine._call_opus_weekly_narrative.side_effect = side_effect
+
+        with patch("ml.server._get_scanner", return_value=mock_engine):
+            client = TestClient(app)
+            resp = client.post("/weekly/refresh")
+
+        assert resp.status_code == 200
+        mock_engine._call_opus_weekly_narrative.assert_called_once()
+
+    def test_post_weekly_refresh_500_when_opus_fails(self):
+        from unittest.mock import patch, MagicMock
+        from fastapi.testclient import TestClient
+        from ml.server import app
+
+        mock_engine = MagicMock()
+        mock_engine._weekly_narrative_cache = None
+        mock_engine._weekly_narrative_fetched_at = None
+        mock_engine._call_opus_weekly_narrative.return_value = None
+
+        with patch("ml.server._get_scanner", return_value=mock_engine):
+            client = TestClient(app)
+            resp = client.post("/weekly/refresh")
+
+        assert resp.status_code == 500
