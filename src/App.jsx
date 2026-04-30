@@ -3610,6 +3610,15 @@ export default function App() {
             ))}
             <div style={{ width: 1, height: 16, background: "#14142a", margin: "0 3px" }} />
             <button style={btn(false)} onClick={() => fetchCandles(false)} disabled={loadingData}>{loadingData ? "..." : "↻ REFRESH"}</button>
+            {isChartManual && (
+              <button
+                style={btn(false, "#9370db")}
+                onClick={resetChartScale}
+                title="Reset chart scale to auto-fit"
+              >
+                ⊕ AUTO
+              </button>
+            )}
             <button style={btn(false, "#26a69a")} onClick={() => runAnalysis()} disabled={!!loadingStep || !candles.length}>
               {loadingStep ? `STEP ${loadingStep === "4h" ? "1/3" : loadingStep === "claude" ? "2/3" : "3/3"}...` : "⬡ RUN ICT ANALYSIS"}
             </button>
