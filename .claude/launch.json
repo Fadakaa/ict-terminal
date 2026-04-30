@@ -12,6 +12,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["server.js"],
       "port": 3001
+    },
+    {
+      "name": "ict-verify",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port=5180", "--strictPort"],
+      "port": 5180
     }
   ]
 }

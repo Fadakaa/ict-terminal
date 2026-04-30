@@ -951,8 +951,8 @@ export default function App() {
     g.append("rect").attr("width", w).attr("height", h).attr("fill", "#06060e");
 
     const visibleArrayIndices = xManualRange
-      ? candles.reduce((acc, c, i) => {
-          if (c.candleIndex >= xManualRange[0] && c.candleIndex <= xManualRange[1]) acc.push(i);
+      ? candles.reduce((acc, _c, i) => {
+          if (i >= xManualRange[0] && i <= xManualRange[1]) acc.push(i);
           return acc;
         }, [])
       : candles.map((_, i) => i);
@@ -1230,7 +1230,7 @@ export default function App() {
     const startMouseX = evt.clientX - rect.left - s.m.left;
     const startMouseY = evt.clientY - rect.top - s.m.top;
 
-    const allCandleIndices = candles.map((c) => c.candleIndex);
+    const allCandleIndices = candles.map((_, i) => i);
     const firstIdx = allCandleIndices[0];
     const lastIdx = allCandleIndices[allCandleIndices.length - 1];
 
@@ -1240,11 +1240,10 @@ export default function App() {
       anchorPrice = s.y.invert(startMouseY);
     } else if (kind === "x-axis" || kind === "pan") {
       const step = s.x.step();
-      const arrIdx = Math.max(
+      anchorIndex = Math.max(
         0,
         Math.min(Math.round((startMouseX - s.x.bandwidth() / 2) / step), candles.length - 1)
       );
-      anchorIndex = candles[arrIdx]?.candleIndex ?? firstIdx;
     }
 
     if (kind === "pan" && xManualRange === null) return; // no-op in auto mode
@@ -3696,12 +3695,11 @@ export default function App() {
                 if (mx < 0 || mx > s.w || my < 0 || my > s.h) return;
                 // preventDefault for page scroll is handled by the native listener in Step 2
 
-                const allCandleIndices = candles.map((c) => c.candleIndex);
+                const allCandleIndices = candles.map((_, i) => i);
                 const firstIdx = allCandleIndices[0];
                 const lastIdx = allCandleIndices[allCandleIndices.length - 1];
                 const step = s.x.step();
-                const arrIdx = Math.max(0, Math.min(Math.round((mx - s.x.bandwidth() / 2) / step), candles.length - 1));
-                const anchorIndex = candles[arrIdx]?.candleIndex ?? firstIdx;
+                const anchorIndex = Math.max(0, Math.min(Math.round((mx - s.x.bandwidth() / 2) / step), candles.length - 1));
                 const anchorPrice = s.y.invert(my);
 
                 const result = wheelZoom({
