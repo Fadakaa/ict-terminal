@@ -11,6 +11,7 @@ import {
   computeATR,
   generateSetupId,
 } from "./market.js";
+import { useChartScale } from "./useChartScale.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -288,6 +289,15 @@ export default function App() {
   const [candles, setCandles] = useState([]);
   const [candles4h, setCandles4h] = useState([]);
   const [timeframe, setTimeframe] = useState("1h");
+  const {
+    yManualDomain,
+    setYManualDomain,
+    xManualRange,
+    setXManualRange,
+    reset: resetChartScale,
+    isManual: isChartManual,
+  } = useChartScale(timeframe);
+  const dragStateRef = useRef(null);
 
   // ── API keys ──
   const [claudeKey, setClaudeKey] = useState(() => loadSaved("ict_claude_key", ""));
