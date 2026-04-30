@@ -1192,6 +1192,16 @@ export default function App() {
         ax.selectAll("text").attr("fill", "#444466").attr("font-size", "8px").attr("font-family", "monospace");
       });
     g.append("text").attr("x", w).attr("y", h + 22).attr("fill", "#444466").attr("font-size", "8px").attr("font-family", "monospace").attr("text-anchor", "end").text("GMT");
+    g.append("rect")
+      .attr("class", "x-axis-hit")
+      .attr("x", 0)
+      .attr("y", h)
+      .attr("width", w + m.right)
+      .attr("height", m.bottom)
+      .attr("fill", "transparent")
+      .style("cursor", "ew-resize")
+      .on("mousedown", (evt) => startDragRef.current?.("x-axis", evt))
+      .on("dblclick", () => setXManualRange(null));
     g.append("g")
       .call(d3.axisLeft(y).ticks(7).tickFormat((d) => d.toFixed(0)))
       .call((ax) => {
