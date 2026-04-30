@@ -185,6 +185,7 @@ EXECUTION CANDLES ({len(h1_slim)} candles):
 8. CRITICAL: Only suggest entry if there is a pullback or rejection into the zone. Do NOT enter on displacement candles.
 9. STOP LOSS: Gold's noise floor is 3.0 ATR. Place SL below/above the structural level (OB boundary) but ensure minimum 3.0 ATR distance from entry. Tighter SLs get stopped by normal volatility ~65%+ of the time.
 10. If there is no high-probability setup right now, say so honestly. Set entry to null.
+11. For every OB, FVG, and liquidity level you return, set "tf" to the timeframe where you identified it (e.g. "1H" or "4H" — match the labels of the candle blocks above). HTF zones generally carry more weight than LTF zones; flag them so the system can weight them accordingly. Use execution-timeframe-relative candleIndex/startIndex even for HTF zones — find the execution candle that aligns with the HTF zone's anchor time.
 
 Return ONLY valid JSON:
 {{
@@ -200,18 +201,21 @@ Return ONLY valid JSON:
   }},
   "orderBlocks": [{{
     "type": "bullish|bearish", "high": number, "low": number, "candleIndex": number,
+    "tf": "1H|4H|1D|...",
     "strength": "strong|moderate|weak",
     "times_tested": number,
     "note": "string"
   }}],
   "fvgs": [{{
     "type": "bullish|bearish", "high": number, "low": number, "startIndex": number,
+    "tf": "1H|4H|1D|...",
     "filled": boolean, "fill_percentage": number,
     "overlaps_ob": boolean,
     "note": "string"
   }}],
   "liquidity": [{{
     "type": "buyside|sellside", "price": number, "candleIndex": number,
+    "tf": "1H|4H|1D|...",
     "swept": boolean,
     "note": "string"
   }}],

@@ -81,6 +81,35 @@ function generateDemoCandles(count, base, spread, startDate) {
 function getDemoData() {
   const candles1h = generateDemoCandles(60, 2920, 4, new Date("2026-03-13T00:00:00Z"));
   const candles4h = generateDemoCandles(20, 2905, 8, new Date("2026-03-10T00:00:00Z"));
+
+  // Pin the candles at each formation index to the OHLC implied by the
+  // hardcoded analysis below — without this, the random walk produces price
+  // ranges that don't match the OB/FVG/liquidity bounds and the zones look
+  // like they're floating instead of anchored to a candle.
+  const inject = (idx, o, h, l, c) => {
+    if (!candles1h[idx]) return;
+    candles1h[idx] = {
+      ...candles1h[idx],
+      open: +o.toFixed(2), high: +h.toFixed(2), low: +l.toFixed(2), close: +c.toFixed(2),
+    };
+  };
+  // BSL @ 25 — equal-highs liquidity at 2936.50 (unswept)
+  inject(25, 2935.50, 2936.50, 2935.20, 2935.80);
+  // Bearish OB @ 28 — last bullish candle before bearish displacement, 2933.50–2936.00
+  inject(28, 2933.80, 2936.00, 2933.50, 2935.80);
+  // Bearish FVG @ 30–32 — gap from 2929.50 (low) to 2932.00 (high)
+  inject(30, 2933.20, 2933.40, 2932.00, 2932.20);
+  inject(31, 2932.00, 2932.20, 2929.60, 2929.80); // displacement
+  inject(32, 2929.80, 2929.50, 2927.50, 2928.00);
+  // SSL @ 38 — sweep wick below 2912.00, close back above (manipulation)
+  inject(38, 2913.50, 2913.80, 2911.80, 2913.20);
+  // Bullish OB @ 42 — last bearish candle before bullish displacement, 2915.20–2918.50
+  inject(42, 2918.30, 2918.50, 2915.20, 2915.50);
+  // Bullish FVG @ 43–45 — gap from 2917.50 (low) to 2919.80 (high), overlaps the OB
+  inject(43, 2916.00, 2917.50, 2915.80, 2917.30);
+  inject(44, 2917.30, 2922.00, 2917.10, 2921.50); // BOS break candle (close > 2920)
+  inject(45, 2921.00, 2924.00, 2919.80, 2923.50);
+
   const lastClose = candles1h[candles1h.length - 1].close;
   return {
     candles: candles1h,
@@ -97,16 +126,16 @@ function getDemoData() {
         htf_bias: "bullish",
       },
       orderBlocks: [
-        { type: "bullish", high: 2918.50, low: 2915.20, candleIndex: 42, strength: "strong", times_tested: 0, note: "Untested OB from 4.5 ATR displacement" },
-        { type: "bearish", high: 2936.00, low: 2933.50, candleIndex: 28, strength: "moderate", times_tested: 1, note: "Tested once, still holding" },
+        { type: "bullish", high: 2918.50, low: 2915.20, candleIndex: 42, tf: "1H", strength: "strong", times_tested: 0, note: "Untested OB from 4.5 ATR displacement" },
+        { type: "bearish", high: 2936.00, low: 2933.50, candleIndex: 28, tf: "4H", strength: "moderate", times_tested: 1, note: "4H OB overhead — tested once, still holding" },
       ],
       fvgs: [
-        { type: "bullish", high: 2919.80, low: 2917.50, startIndex: 43, filled: false, fill_percentage: 0.15, overlaps_ob: true, note: "Overlaps bullish OB" },
-        { type: "bearish", high: 2932.00, low: 2929.50, startIndex: 30, filled: true, fill_percentage: 0.92, note: "Nearly fully filled" },
+        { type: "bullish", high: 2919.80, low: 2917.50, startIndex: 43, tf: "1H", filled: false, fill_percentage: 0.15, overlaps_ob: true, note: "Overlaps bullish OB" },
+        { type: "bearish", high: 2932.00, low: 2929.50, startIndex: 30, tf: "4H", filled: true, fill_percentage: 0.92, note: "4H FVG nearly fully filled" },
       ],
       liquidity: [
-        { type: "sellside", price: 2912.00, candleIndex: 38, swept: true, note: "SSL swept during London open" },
-        { type: "buyside", price: 2936.50, candleIndex: 25, swept: false, note: "Equal highs — unswept BSL target" },
+        { type: "sellside", price: 2912.00, candleIndex: 38, tf: "1H", swept: true, note: "SSL swept during London open" },
+        { type: "buyside", price: 2936.50, candleIndex: 25, tf: "4H", swept: false, note: "4H equal highs — unswept BSL target" },
       ],
       structure: { type: "bos", direction: "bullish", break_candle_index: 44, note: "Bullish BOS confirmed above 2920" },
       entry: { price: 2917.80, direction: "long", entry_type: "rejection", rationale: "Rejection from bullish OB + FVG overlap in discount zone after SSL sweep" },
@@ -251,6 +280,7 @@ ANALYSIS FRAMEWORK:
 6. Is there a break of structure or change of character confirming direction?
 7. CRITICAL: Only suggest entry if there is a pullback or rejection into the zone. Do NOT enter on displacement candles.
 8. If there is no high-probability setup right now, say so honestly. Set entry to null.
+9. For every OB, FVG, and liquidity level you return, set "tf" to the timeframe where you identified it ("1H" or "4H"). Use 1H-relative candleIndex/startIndex even for 4H zones — find the 1H candle that aligns with the 4H zone's anchor time. Include 4H zones if they are within or near the visible 1H window and relevant to the setup.
 
 Return ONLY valid JSON:
 {
@@ -264,9 +294,9 @@ Return ONLY valid JSON:
     "recent_sweep": "bsl|ssl|none",
     "htf_bias": "bullish|bearish|neutral"
   },
-  "orderBlocks": [{"type": "bullish|bearish", "high": number, "low": number, "candleIndex": number, "strength": "strong|moderate|weak", "times_tested": number, "note": "string"}],
-  "fvgs": [{"type": "bullish|bearish", "high": number, "low": number, "startIndex": number, "filled": boolean, "fill_percentage": number, "overlaps_ob": boolean, "note": "string"}],
-  "liquidity": [{"type": "buyside|sellside", "price": number, "candleIndex": number, "swept": boolean, "note": "string"}],
+  "orderBlocks": [{"type": "bullish|bearish", "high": number, "low": number, "candleIndex": number, "tf": "1H|4H", "strength": "strong|moderate|weak", "times_tested": number, "note": "string"}],
+  "fvgs": [{"type": "bullish|bearish", "high": number, "low": number, "startIndex": number, "tf": "1H|4H", "filled": boolean, "fill_percentage": number, "overlaps_ob": boolean, "note": "string"}],
+  "liquidity": [{"type": "buyside|sellside", "price": number, "candleIndex": number, "tf": "1H|4H", "swept": boolean, "note": "string"}],
   "structure": {"type": "bos|choch|none", "direction": "bullish|bearish", "break_candle_index": number, "note": "string"},
   "entry": {"price": number, "direction": "long|short", "entry_type": "rejection|retracement", "rationale": "string"} | null,
   "stopLoss": {"price": number, "rationale": "string"} | null,
@@ -540,8 +570,15 @@ export default function App() {
 
   const runAnalysis = useCallback(async (candleData, fourHData) => {
     const cds = candleData || candlesRef.current;
-    const key = claudeKeyRef.current;
-    if (!cds.length || !key.trim()) return;
+    const key = (claudeKeyRef.current || "").trim();
+    if (!cds.length || !key) return;
+    // HTTP header values must be printable ASCII; smart quotes, NBSP, or zero-width
+    // characters from copy-paste cause fetch() to throw "string did not match the
+    // expected pattern". Catch it early with a useful message instead.
+    if (!/^[\x21-\x7e]+$/.test(key)) {
+      setError("API key contains invalid characters — re-copy it from console.anthropic.com (avoid pasting through rich-text apps).");
+      return;
+    }
 
     const hash = hashCandles(cds);
     if (hash && hash === analysisCacheRef.current.hash && analysisCacheRef.current.result) {
@@ -569,7 +606,7 @@ export default function App() {
       const prompt = buildEnhancedICTPrompt(cds, h4);
       const res = await fetch("/api/anthropic/v1/messages", {
         method: "POST", signal: abort.signal,
-        headers: { "Content-Type": "application/json", "x-api-key": key.trim(), "anthropic-version": "2023-06-01" },
+        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
           model: "claude-sonnet-4-6", max_tokens: 5000, temperature: 0,
           system: buildICTSystemMessage(),
@@ -820,7 +857,12 @@ export default function App() {
   // ═══════════════════════════════════════════════════════════
 
   const fetchData = async () => {
-    if (!claudeKey.trim()) { setError("Enter your Anthropic API key"); return; }
+    const key = claudeKey.trim();
+    if (!key) { setError("Enter your Anthropic API key"); return; }
+    if (!/^[\x21-\x7e]+$/.test(key)) {
+      setError("API key contains invalid characters — re-copy it from console.anthropic.com (avoid pasting through rich-text apps).");
+      return;
+    }
     setLoadingData(true); setError(""); setAnalysis(null); setCalibration(null);
     const data = await fetchCandles(false);
     if (data) {
@@ -938,7 +980,12 @@ export default function App() {
     const g = svg.append("g").attr("transform", `translate(${m.left},${m.top})`);
     g.append("rect").attr("width", w).attr("height", h).attr("fill", "#06060e");
 
-    const x = d3.scaleBand().domain(candles.map((_, i) => i)).range([0, w]).padding(0.22);
+    // Future-space padding — virtual slots to the right of the last candle so
+    // unmitigated OB/FVG zones (which extend from formation to chart's right edge)
+    // visually project into empty future space. Standard ICT/TradingView convention.
+    const FUTURE_BARS = Math.max(10, Math.ceil(candles.length * 0.2));
+    const totalSlots = candles.length + FUTURE_BARS;
+    const x = d3.scaleBand().domain(Array.from({ length: totalSlots }, (_, i) => i)).range([0, w]).padding(0.22);
 
     // Collect all prices for y-domain
     const allP = candles.flatMap((c) => [c.high, c.low]);
@@ -987,12 +1034,13 @@ export default function App() {
           .attr("stroke", bCol).attr("stroke-width", isMech ? 1.2 : 0.8)
           .attr("stroke-dasharray", isMech ? "none" : "4,3");
         const tag = ob.type === "bullish" ? "BULL" : "BEAR";
+        const tfTag = ob.tf ? ` ${ob.tf}` : "";
         const suffix = strength === "strong" ? " ★" : "";
         const srcTag = isMech ? "" : " ᶜ";
         g.append("text").attr("x", ox + 3).attr("y", y(ob.high) - 2)
           .attr("fill", bCol).attr("font-size", "8px").attr("font-family", "monospace")
           .attr("opacity", isMech ? 1 : 0.7)
-          .text(`${tag} OB${suffix}${srcTag}`);
+          .text(`${tag} OB${tfTag}${suffix}${srcTag}`);
       });
 
       // FVGs — mechanical (solid border) vs Claude (dashed, dimmer)
@@ -1011,22 +1059,26 @@ export default function App() {
           .attr("fill", fvg.type === "bullish" ? `rgba(100,181,246,${fillOpacity})` : `rgba(255,167,38,${fillOpacity})`)
           .attr("stroke", fCol).attr("stroke-width", isFilled ? 0.5 : (isMech ? 1 : 0.6))
           .attr("stroke-dasharray", isMech ? "none" : "3,3").attr("opacity", strokeOpacity);
-        const label = isFilled ? "FVG ✗"
-          : fvg.fill_percentage > 0 ? `FVG ${Math.round(fvg.fill_percentage)}%`
-          : `FVG${isMech ? "" : " ᶜ"}`;
+        const fvgTfTag = fvg.tf ? ` ${fvg.tf}` : "";
+        const label = isFilled ? `FVG${fvgTfTag} ✗`
+          : fvg.fill_percentage > 0 ? `FVG${fvgTfTag} ${Math.round(fvg.fill_percentage)}%`
+          : `FVG${fvgTfTag}${isMech ? "" : " ᶜ"}`;
         g.append("text").attr("x", fx + 3).attr("y", y(fvg.high) - 2)
           .attr("fill", fCol).attr("font-size", "7.5px").attr("font-family", "monospace")
           .attr("opacity", isFilled ? 0.4 : (isMech ? 1 : 0.7)).text(label);
       });
 
-      // Liquidity levels
+      // Liquidity levels — anchored at formation candle, project forward
       analysis.liquidity?.forEach((liq) => {
         const lCol = liq.type === "buyside" ? "#f5c842" : "#ff6b6b";
-        g.append("line").attr("x1", 0).attr("x2", w).attr("y1", y(liq.price)).attr("y2", y(liq.price))
+        const lci = Math.max(0, Math.min(liq.candleIndex ?? 0, candles.length - 1));
+        const lx = x(lci) ?? 0;
+        g.append("line").attr("x1", lx).attr("x2", w).attr("y1", y(liq.price)).attr("y2", y(liq.price))
           .attr("stroke", lCol).attr("stroke-width", 1).attr("stroke-dasharray", "7,4").attr("opacity", 0.8);
+        const liqTfTag = liq.tf ? ` ${liq.tf}` : "";
         g.append("text").attr("x", w + 3).attr("y", y(liq.price) + 4)
           .attr("fill", lCol).attr("font-size", "8px").attr("font-family", "monospace")
-          .text(liq.type === "buyside" ? "BSL" : "SSL");
+          .text(`${liq.type === "buyside" ? "BSL" : "SSL"}${liqTfTag}`);
       });
 
       // ── 4H Dealing Range markers ──
@@ -1056,10 +1108,15 @@ export default function App() {
       const claudeOpacity = hasCal ? 0.4 : 1;
       const claudeDash = hasCal ? "6,3" : "0";
 
+      // Trade levels anchor at the entry candle (last actual candle) and project
+      // forward into future space \u2014 they describe the upcoming trade, not the past.
+      const tradeAnchor = x(candles.length - 1) ?? 0;
+      const labelX = tradeAnchor + 3;
+
       if (analysis.entry) {
-        g.append("line").attr("x1", 0).attr("x2", w).attr("y1", y(analysis.entry.price)).attr("y2", y(analysis.entry.price))
+        g.append("line").attr("x1", tradeAnchor).attr("x2", w).attr("y1", y(analysis.entry.price)).attr("y2", y(analysis.entry.price))
           .attr("stroke", "#f5c842").attr("stroke-width", 1.5);
-        g.append("text").attr("x", 3).attr("y", y(analysis.entry.price) - 3)
+        g.append("text").attr("x", labelX).attr("y", y(analysis.entry.price) - 3)
           .attr("fill", "#f5c842").attr("font-size", "9px").attr("font-family", "monospace").attr("font-weight", "bold")
           .text(`ENTRY ${analysis.entry.price.toFixed(2)}`);
         // Entry arrow
@@ -1076,9 +1133,9 @@ export default function App() {
       if (claudeSL) {
         const slClose = calSL && Math.abs(claudeSL - calSL) < 0.50;
         if (!slClose || !hasCal) {
-          g.append("line").attr("x1", 0).attr("x2", w).attr("y1", y(claudeSL)).attr("y2", y(claudeSL))
+          g.append("line").attr("x1", tradeAnchor).attr("x2", w).attr("y1", y(claudeSL)).attr("y2", y(claudeSL))
             .attr("stroke", "#ef5350").attr("stroke-width", 1.5).attr("stroke-dasharray", claudeDash).attr("opacity", claudeOpacity);
-          g.append("text").attr("x", 3).attr("y", y(claudeSL) - 3)
+          g.append("text").attr("x", labelX).attr("y", y(claudeSL) - 3)
             .attr("fill", "#ef5350").attr("font-size", "8px").attr("font-family", "monospace").attr("opacity", claudeOpacity)
             .text(hasCal ? `CLAUDE SL ${claudeSL.toFixed(2)}` : `SL ${claudeSL.toFixed(2)}`);
         }
@@ -1087,9 +1144,9 @@ export default function App() {
         const calTP = calTPs[i];
         const tpClose = calTP && Math.abs(tp.price - calTP) < 0.50;
         if (!tpClose || !hasCal) {
-          g.append("line").attr("x1", 0).attr("x2", w).attr("y1", y(tp.price)).attr("y2", y(tp.price))
+          g.append("line").attr("x1", tradeAnchor).attr("x2", w).attr("y1", y(tp.price)).attr("y2", y(tp.price))
             .attr("stroke", "#00e676").attr("stroke-width", 1).attr("stroke-dasharray", claudeDash).attr("opacity", claudeOpacity);
-          g.append("text").attr("x", 3).attr("y", y(tp.price) - 3)
+          g.append("text").attr("x", labelX).attr("y", y(tp.price) - 3)
             .attr("fill", "#00e676").attr("font-size", "8px").attr("font-family", "monospace").attr("opacity", claudeOpacity)
             .text(hasCal ? `CLAUDE TP${i + 1}` : `TP${i + 1} ${tp.price.toFixed(2)}${tp.rr ? ` (${tp.rr.toFixed(1)}R)` : ""}`);
         }
@@ -1099,9 +1156,9 @@ export default function App() {
       if (hasCal) {
         if (calSL) {
           const slClose = claudeSL && Math.abs(claudeSL - calSL) < 0.50;
-          g.append("line").attr("x1", 0).attr("x2", w).attr("y1", y(calSL)).attr("y2", y(calSL))
+          g.append("line").attr("x1", tradeAnchor).attr("x2", w).attr("y1", y(calSL)).attr("y2", y(calSL))
             .attr("stroke", "#ef5350").attr("stroke-width", 1.5);
-          g.append("text").attr("x", 3).attr("y", y(calSL) - 3)
+          g.append("text").attr("x", labelX).attr("y", y(calSL) - 3)
             .attr("fill", "#ef5350").attr("font-size", "9px").attr("font-family", "monospace").attr("font-weight", "bold")
             .text(slClose ? `SL ${calSL.toFixed(2)} \u2713` : `CAL SL ${calSL.toFixed(2)}`);
         }
@@ -1109,9 +1166,9 @@ export default function App() {
           const claudeTP = claudeTPs[i]?.price;
           const tpClose = claudeTP && Math.abs(claudeTP - tp) < 0.50;
           const rr = calibration.calibrated.rr_ratios?.[i];
-          g.append("line").attr("x1", 0).attr("x2", w).attr("y1", y(tp)).attr("y2", y(tp))
+          g.append("line").attr("x1", tradeAnchor).attr("x2", w).attr("y1", y(tp)).attr("y2", y(tp))
             .attr("stroke", "#00e676").attr("stroke-width", 1.5);
-          g.append("text").attr("x", 3).attr("y", y(tp) - 3)
+          g.append("text").attr("x", labelX).attr("y", y(tp) - 3)
             .attr("fill", "#00e676").attr("font-size", "9px").attr("font-family", "monospace").attr("font-weight", "bold")
             .text(tpClose ? `TP${i + 1} ${tp.toFixed(2)} \u2713${rr ? ` (${rr.toFixed(1)}R)` : ""}` : `CAL TP${i + 1} ${tp.toFixed(2)}${rr ? ` (${rr.toFixed(1)}R)` : ""}`);
         });
@@ -1120,7 +1177,7 @@ export default function App() {
         if (calibration.adjustments?.sl_widened && claudeSL && calSL) {
           const y1 = y(Math.max(claudeSL, calSL));
           const y2 = y(Math.min(claudeSL, calSL));
-          g.append("rect").attr("x", 0).attr("y", y1).attr("width", w)
+          g.append("rect").attr("x", tradeAnchor).attr("y", y1).attr("width", Math.max(0, w - tradeAnchor))
             .attr("height", Math.abs(y2 - y1))
             .attr("fill", "rgba(239,83,80,0.06)")
             .attr("stroke", "#ef5350").attr("stroke-width", 0.5).attr("stroke-dasharray", "2,4");
