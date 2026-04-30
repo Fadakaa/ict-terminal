@@ -456,17 +456,30 @@ def notify_entry_missed(setup_data: dict):
 # Existing: Setup detection + Trade resolution (backward compatible)
 # ═══════════════════════════════════════════════════════════════════════
 
-def notify_new_setup(setup_data: dict, is_prospected: bool = False):
-    """Send notification for a newly detected setup (standard scanner flow).
-
-    If is_prospected=True, skip — entry_trigger already sent.
+def _build_calendar_warning_line(setup_data: dict) -> str:
+    """Render a warning line for setups inside a caution/imminent calendar
+    window. Returns ``""`` when the calendar is clear or no proximity payload
+    is attached. Spec: warnings only — no suppression, no grade adjustment.
     """
-    if is_prospected:
-        return
+    prox = setup_data.get("calendar_proximity") or {}
+    state = prox.get("state")
+    if state not in ("caution", "imminent"):
+        return ""
+    label = "WARNING" if state == "imminent" else "CAUTION"
+    title = prox.get("next_event_title") or "high-impact news"
+    minutes = prox.get("next_event_minutes")
+    if isinstance(minutes, (int, float)):
+        return f"⚠ {label}: {title} in ~{int(round(minutes))}m"
+    return f"⚠ {label}: {title} approaching"
 
+
+def build_notification_message(setup_data: dict) -> str:
+    """Compose the body of a 'new setup' notification.
+
+    Pure function (no I/O) so the body can be unit-tested without firing
+    macOS / Telegram side-effects. Used by ``notify_new_setup``.
+    """
     d = setup_data
-    title = f"NEW {d['direction'].upper()} Setup [{d['timeframe']}]"
-
     cal = d.get("calibration_json") or {}
     conf = cal.get("confidence", {})
     grade = d.get("setup_quality", conf.get("grade", "?"))
@@ -478,7 +491,6 @@ def notify_new_setup(setup_data: dict, is_prospected: bool = False):
     effective_sl = d.get("calibrated_sl") or d.get("sl_price", 0)
     lot = _calc_lot_size(d["entry_price"], effective_sl)
 
-    # Current price (from proximity monitor or detection-time)
     current_price = d.get("current_price")
     price_line = ""
     if current_price and d["entry_price"]:
@@ -486,6 +498,7 @@ def notify_new_setup(setup_data: dict, is_prospected: bool = False):
         price_line = f"📍 Live Price: ${current_price:.2f} (${dist:.1f} from entry)"
 
     body_lines = [
+        _build_calendar_warning_line(d),
         f"Direction: {d['direction'].upper()} | Bias: {d.get('bias', '?')}",
         f"Entry: ${d['entry_price']:.2f}",
         price_line,
@@ -506,7 +519,20 @@ def notify_new_setup(setup_data: dict, is_prospected: bool = False):
     ]
     if d.get("opus_validated"):
         body_lines.insert(0, "✅ Opus Validated")
-    body = "\n".join(line for line in body_lines if line)
+    return "\n".join(line for line in body_lines if line)
+
+
+def notify_new_setup(setup_data: dict, is_prospected: bool = False):
+    """Send notification for a newly detected setup (standard scanner flow).
+
+    If is_prospected=True, skip — entry_trigger already sent.
+    """
+    if is_prospected:
+        return
+
+    d = setup_data
+    title = f"NEW {d['direction'].upper()} Setup [{d['timeframe']}]"
+    body = build_notification_message(d)
 
     cfg = get_config()
     if cfg.get("notify_macos", True):

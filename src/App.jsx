@@ -338,6 +338,8 @@ export default function App() {
   const [prospects, setProspects] = useState(null);
   const [bayesianDrift, setBayesianDrift] = useState(null);
   const [killzoneGates, setKillzoneGates] = useState(null);
+  const [calendarUpcoming, setCalendarUpcoming] = useState(null);
+  const [calendarProximity, setCalendarProximity] = useState(null);
 
   // ── Narrative / Thesis / Lifecycle ──
   const [currentThesis, setCurrentThesis] = useState(null);
@@ -452,6 +454,8 @@ export default function App() {
       ["/api/ml/backtest/status", setBacktestStatus],
       ["/api/ml/scanner/prospects", setProspects],
       ["/api/ml/killzone/gates", setKillzoneGates],
+      ["/api/ml/calendar/upcoming?hours=24", setCalendarUpcoming],
+      ["/api/ml/calendar/proximity", setCalendarProximity],
       [`/api/ml/narrative/thesis/current?timeframe=${timeframe}`, setCurrentThesis],
       [`/api/ml/narrative/thesis/history?timeframe=${timeframe}&limit=10`, setThesisHistory],
       ["/api/ml/narrative/thesis/accuracy", setThesisAccuracy],
@@ -1554,7 +1558,7 @@ export default function App() {
 
   // ── ML Performance Dashboard Tab ──
   const renderMLTab = () => {
-    const noData = !evalDual && !costBudget && !backtestMeta && !backtestStatus && !bayesianDrift && !modelInfo && !datasetStats && !accuracy && !calibrationValue && !scannerStatus;
+    const noData = !evalDual && !costBudget && !backtestMeta && !backtestStatus && !bayesianDrift && !modelInfo && !datasetStats && !accuracy && !calibrationValue && !scannerStatus && !calendarUpcoming && !calendarProximity;
     if (noData) return <div style={{ color: "#33334d", fontSize: 8, textAlign: "center", marginTop: 20 }}>No ML data. Start backend to populate.</div>;
 
     const pct = (v) => v != null ? `${(v * 100).toFixed(1)}%` : "—";
@@ -1814,6 +1818,72 @@ export default function App() {
             ) : (
               <div style={{ fontSize: 6.5, color: "#333", marginTop: 2 }}>No active prospects</div>
             )}
+          </div>
+        )}
+
+        {/* ─── FOREX CALENDAR ─── */}
+        {(calendarUpcoming || calendarProximity) && (
+          <div style={sec}>
+            <div style={secT}>FOREX CALENDAR (USD)</div>
+            {calendarProximity && (() => {
+              const stateColor = {
+                imminent: "#ef5350",
+                caution: "#f5c842",
+                post_event: "#7c4dff",
+                clear: "#26a69a",
+                unavailable: "#444466",
+              }[calendarProximity.state] || "#888";
+              return (
+                <>
+                  {row("State", (calendarProximity.state || "—").toUpperCase(), stateColor)}
+                  {calendarProximity.warning && (
+                    <div style={{ fontSize: 6.5, color: stateColor, padding: "2px 0" }}>
+                      ⚠ {calendarProximity.warning}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+            {calendarUpcoming?.events?.length > 0 ? (
+              <div style={{ marginTop: 4 }}>
+                <div style={{ fontSize: 6, color: "#444466", letterSpacing: 1, marginBottom: 2 }}>NEXT 24H</div>
+                {calendarUpcoming.events.slice(0, 3).map((e) => (
+                  <div key={e.event_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 6.5, padding: "1px 0" }}>
+                    <span style={{ color: "#cdd6f4" }}>{e.title}</span>
+                    <span style={{ color: "#888" }}>{e.timestamp_utc?.slice(11, 16)}Z</span>
+                  </div>
+                ))}
+                {calendarUpcoming.count > 3 && (
+                  <div style={{ fontSize: 6, color: "#444466", marginTop: 2 }}>
+                    + {calendarUpcoming.count - 3} more
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: 6.5, color: "#333", marginTop: 4 }}>
+                No high-impact USD events in the next 24h
+              </div>
+            )}
+            <div style={{ marginTop: 6 }}>
+              <button
+                onClick={async () => {
+                  try {
+                    await fetch("/api/ml/calendar/refresh", { method: "POST" });
+                    const [u, p] = await Promise.all([
+                      fetch("/api/ml/calendar/upcoming?hours=24").then(r => r.ok ? r.json() : null),
+                      fetch("/api/ml/calendar/proximity").then(r => r.ok ? r.json() : null),
+                    ]);
+                    if (u) setCalendarUpcoming(u);
+                    if (p) setCalendarProximity(p);
+                  } catch { /* network errors swallowed — UI keeps last state */ }
+                }}
+                style={{
+                  fontSize: 6, padding: "2px 6px", letterSpacing: 1,
+                  background: "transparent", color: "#7c4dff",
+                  border: "1px solid #33334d", cursor: "pointer",
+                }}
+              >REFRESH NOW</button>
+            </div>
           </div>
         )}
 

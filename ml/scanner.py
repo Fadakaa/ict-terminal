@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -204,6 +204,121 @@ class ScannerEngine:
 
         # Killzone transition tracking
         self._last_killzone = None
+
+        # Forex calendar store — lazy. Tests inject via setattr.
+        self._calendar_store = None
+
+    @property
+    def calendar_store(self):
+        """Lazy CalendarStore wired to the scanner DB.
+
+        Tests that bypass ``__init__`` (via ``ScannerEngine.__new__``) won't
+        have ``_calendar_store`` set — treat that the same as None and skip
+        the lazy build to avoid AttributeError. Tests inject a real store by
+        setting ``self._calendar_store`` directly when they need one.
+        """
+        if getattr(self, "_calendar_store", None) is None:
+            try:
+                from ml.calendar import CalendarStore, ForexFactorySource
+                self._calendar_store = CalendarStore(
+                    source=ForexFactorySource(),
+                    db_path=self.db.db_path,
+                )
+            except Exception as e:
+                logger.debug("CalendarStore init failed: %s", e)
+                return None
+        return self._calendar_store
+
+    def attach_calendar_proximity(
+        self,
+        analysis: dict,
+        now: datetime | None = None,
+    ) -> dict:
+        """Attach calendar proximity metadata to a setup's analysis dict.
+
+        This is the Layer 2 hook — it adds a warning-level signal to every
+        stored setup. It does **not** suppress, downgrade, or block; the spec
+        explicitly defers Layer 3 grade adjustments until enough live data
+        accumulates to learn the right thresholds.
+        """
+        if analysis is None:
+            return analysis
+        store = self.calendar_store
+        if store is None:
+            return analysis
+        if now is None:
+            now = datetime.now(timezone.utc)
+        try:
+            proximity = store.proximity(now)
+        except Exception as e:
+            logger.debug("attach_calendar_proximity failed: %s", e)
+            return analysis
+
+        next_event = proximity.next_event
+        analysis["calendar_proximity"] = {
+            "state": proximity.state,
+            "warning": proximity.warning,
+            "next_event_minutes": (None if proximity.minutes_to_next is None
+                                   else int(round(proximity.minutes_to_next))),
+            "next_event_title": next_event.title if next_event else None,
+            "next_event_category": next_event.category if next_event else None,
+            "next_event_impact": next_event.impact if next_event else None,
+        }
+        return analysis
+
+    def _build_calendar_context(self, now: datetime | None = None) -> dict | None:
+        """Assemble the ``calendar_context`` dict consumed by the prompt builder.
+
+        Returns ``None`` if the calendar store is unavailable so the prompt
+        renders without a calendar block (existing callers stay backward-
+        compatible).
+        """
+        store = self.calendar_store
+        if store is None:
+            return None
+        if now is None:
+            now = datetime.now(timezone.utc)
+        try:
+            proximity = store.proximity(now)
+            upcoming = store.upcoming(hours=24, now=now)
+            recent = store.recent(hours=24, now=now)
+        except Exception as e:
+            logger.debug("Calendar context build failed: %s", e)
+            return None
+
+        def _serialise_event(e, mode: str = "upcoming"):
+            if e is None:
+                return None
+            payload = {
+                "time_utc": e.timestamp_utc.strftime("%Y-%m-%d %H:%M UTC"),
+                "title": e.title,
+                "category": e.category,
+                "impact": e.impact,
+                "forecast": e.forecast,
+                "previous": e.previous,
+            }
+            if mode == "upcoming":
+                payload["minutes_to_next"] = int(round(
+                    (e.timestamp_utc - now).total_seconds() / 60.0
+                ))
+            else:
+                payload["minutes_since"] = int(round(
+                    (now - e.timestamp_utc).total_seconds() / 60.0
+                ))
+            return payload
+
+        return {
+            "proximity": {
+                "state": proximity.state,
+                "warning": proximity.warning,
+                "next_event": _serialise_event(proximity.next_event, "upcoming"),
+                "last_event": _serialise_event(proximity.last_event, "recent"),
+                "minutes_to_next": proximity.minutes_to_next,
+                "minutes_since_last": proximity.minutes_since_last,
+            },
+            "upcoming": [_serialise_event(e, "upcoming") for e in upcoming],
+            "recent": [_serialise_event(e, "recent") for e in recent],
+        }
 
     def is_configured(self) -> bool:
         cfg = get_config()
@@ -1076,6 +1191,10 @@ class ScannerEngine:
             except Exception:
                 pass
 
+            # Layer 2: attach calendar proximity warning. Warning-only — never
+            # suppresses or downgrades the setup.
+            self.attach_calendar_proximity(analysis)
+
             setup_id = self.db.store_setup(
                 direction=direction,
                 bias=analysis.get("bias", ""),
@@ -1665,6 +1784,7 @@ class ScannerEngine:
                         "calibration_json": cal_json,
                         "opus_validated": (setup.get("analysis_json") or {}).get("opus_validated", False),
                         "current_price": result.get("price", 0),
+                        "calendar_proximity": (setup.get("analysis_json") or {}).get("calendar_proximity"),
                     })
                     self.db.mark_notified(setup["id"])
                     logger.info("Safety net: sent entry alert for %s before resolution",
@@ -3424,6 +3544,8 @@ class ScannerEngine:
                     sl_dist = abs(entry_price - sl_price)
                     if sl_dist > 0:
                         rr_list = [round(abs(tp - entry_price) / sl_dist, 2) for tp in tps]
+                # Layer 2: attach calendar proximity warning to prospects too.
+                self.attach_calendar_proximity(analysis)
                 setup_id = self.db.store_setup(
                     direction=direction,
                     bias=setup.get("bias", "neutral"),
@@ -3857,6 +3979,7 @@ class ScannerEngine:
             logger.debug("Key levels computation failed (proceeding without): %s", e)
 
         htf_tf = TIMEFRAMES.get(timeframe, {}).get("htf", "4H") if htf_candles else None
+        _calendar_ctx = self._build_calendar_context()
         prompt = build_enhanced_ict_prompt(
             candles,        # full execution candles — never truncate
             htf_candles,    # always send HTF — Sonnet must verify Opus
@@ -3872,7 +3995,8 @@ class ScannerEngine:
             htf_label=htf_tf,
             key_levels=_key_levels,
             weekly_narrative=weekly_narrative,
-            weekly_matched_level=weekly_matched_level)
+            weekly_matched_level=weekly_matched_level,
+            calendar_context=_calendar_ctx)
         # Prepend timeframe context so Claude knows what it's analyzing
         tf_note = f"You are analyzing {timeframe} candles for XAU/USD. "
         if htf_candles:

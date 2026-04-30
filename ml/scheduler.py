@@ -369,6 +369,41 @@ async def _recompute_intermarket_job():
         logger.error("Intermarket recompute failed: %s", e, exc_info=True)
 
 
+def _build_calendar_store():
+    """Construct a CalendarStore wired against the configured DB path.
+
+    Kept as a separate helper so tests can monkeypatch the source without
+    re-implementing the live wiring.
+    """
+    from ml.calendar import CalendarStore, ForexFactorySource
+    cfg = get_config()
+    db_path = cfg.get("db_path")
+    return CalendarStore(source=ForexFactorySource(), db_path=db_path)
+
+
+async def _refresh_calendar_job(store=None):
+    """Refresh the forex calendar cache (FF XML weekly feed)."""
+    import urllib.error
+    try:
+        if store is None:
+            store = _build_calendar_store()
+        loop = asyncio.get_event_loop()
+        n = await loop.run_in_executor(None, lambda: store.refresh(force=False))
+        logger.info("[CALENDAR] refresh: %d events updated", n)
+        if n > 0:
+            print(f"[CALENDAR] refresh: {n} events updated")
+    except urllib.error.HTTPError as e:
+        # 429s are transient; log and let the next tick retry. Anything else
+        # (5xx, etc.) we surface but don't crash the scheduler.
+        if e.code == 429:
+            logger.warning("[CALENDAR] refresh rate-limited (429); retry next tick")
+        else:
+            logger.exception("[CALENDAR] refresh HTTP %d", e.code)
+    except Exception as e:
+        print(f"[CALENDAR] refresh failed: {e}")
+        logger.exception("[CALENDAR] refresh failed")
+
+
 async def _weekly_cache_clear_job():
     """Clear weekly narrative cache on Sunday 21:00 UTC (weekly candle close).
 
@@ -467,6 +502,15 @@ def start_scheduler():
             _weekly_cache_clear_job, "cron",
             day_of_week="sun", hour=21, minute=0,
             id="weekly_cache_clear",
+            replace_existing=True,
+        )
+
+        # Refresh forex calendar (FF XML) every 60 minutes
+        _scheduler.add_job(
+            _refresh_calendar_job, "interval",
+            minutes=60,
+            id="calendar_refresh",
+            misfire_grace_time=600,
             replace_existing=True,
         )
 

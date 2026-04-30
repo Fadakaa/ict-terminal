@@ -8,6 +8,224 @@ from ml.features import (
 )
 
 
+# ── Task 11 — Calendar columns in feature schema ────────────────
+
+def test_feature_schema_includes_calendar_columns():
+    from ml.feature_schema import FEATURE_COLUMNS
+    expected = {
+        "mins_to_next_high_impact",
+        "mins_since_last_high_impact",
+        "news_density_24h",
+        "calendar_proximity_clear",
+        "calendar_proximity_post_event",
+        "calendar_proximity_caution",
+        "calendar_proximity_imminent",
+        "event_is_nfp",
+        "event_is_cpi",
+        "event_is_ppi",
+        "event_is_fomc",
+        "event_is_fed_speak",
+        "event_is_gdp",
+        "event_is_ism",
+        "event_is_retail_sales",
+        "event_is_unemployment",
+        "event_is_jolts",
+        "event_is_other_high",
+    }
+    assert expected.issubset(set(FEATURE_COLUMNS))
+    # Baseline was 59; +18 = 77.
+    assert len(FEATURE_COLUMNS) == 77
+
+
+# ── Task 12 — Calendar feature extraction ──────────────────
+
+def _calendar_store_with_fixture(tmp_path):
+    """Build a CalendarStore wired to the FF fixture used elsewhere."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+    import sqlite3
+    from ml.calendar import CalendarStore, ForexFactorySource
+    from ml.scanner_db import init_db
+    fixture = Path(__file__).parent / "fixtures" / "ff_calendar_sample.xml"
+    db = tmp_path / "test.db"
+    init_db(str(db))
+    store = CalendarStore(
+        source=ForexFactorySource(_offline_path=str(fixture)),
+        db_path=str(db),
+    )
+    store.refresh(force=True)
+    return store
+
+
+def test_calendar_features_imminent_fomc(tmp_path, sample_candles, sample_analysis):
+    from datetime import datetime, timezone
+    store = _calendar_store_with_fixture(tmp_path)
+    feats = extract_features(
+        sample_analysis,
+        sample_candles,
+        timeframe="1h",
+        calendar_store=store,
+        now=datetime(2026, 4, 29, 17, 45, tzinfo=timezone.utc),
+    )
+    # 15 minutes before FOMC at 18:00 → imminent.
+    assert feats["calendar_proximity_imminent"] == 1
+    assert feats["calendar_proximity_clear"] == 0
+    assert feats["event_is_fomc"] == 1
+    assert feats["event_is_nfp"] == 0
+    assert 14 <= feats["mins_to_next_high_impact"] <= 16
+
+
+def test_calendar_features_default_safe_when_store_unavailable(
+    sample_candles, sample_analysis
+):
+    feats = extract_features(
+        sample_analysis,
+        sample_candles,
+        timeframe="1h",
+        calendar_store=None,
+    )
+    # No store → safe defaults: clamp to "no event in window", proximity=clear.
+    assert feats["mins_to_next_high_impact"] == 1440
+    assert feats["mins_since_last_high_impact"] == 1440
+    assert feats["news_density_24h"] == 0
+    assert feats["calendar_proximity_clear"] == 1
+    assert feats["calendar_proximity_imminent"] == 0
+    for col in ("event_is_nfp", "event_is_cpi", "event_is_fomc",
+                "event_is_other_high"):
+        assert feats[col] == 0
+
+
+def test_calendar_features_clear_state_uses_other_high_default(
+    tmp_path, sample_candles, sample_analysis
+):
+    from datetime import datetime, timezone
+    store = _calendar_store_with_fixture(tmp_path)
+    feats = extract_features(
+        sample_analysis,
+        sample_candles,
+        timeframe="1h",
+        calendar_store=store,
+        now=datetime(2026, 4, 29, 14, 0, tzinfo=timezone.utc),
+    )
+    # 4h before FOMC, but the upcoming-event one-hot still reflects the next
+    # event's category for the model's benefit (proximity tells it whether to
+    # weight it).
+    assert feats["calendar_proximity_clear"] == 1
+    assert feats["calendar_proximity_imminent"] == 0
+    # FOMC is the next event; one-hot for fomc should still be set.
+    assert feats["event_is_fomc"] == 1
+
+
+# ── Task 19 — Backfill calendar features for stored setups ──
+
+def test_feature_backfill_populates_calendar_columns(tmp_path):
+    import json
+    import sqlite3
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from ml.calendar import CalendarStore, ForexFactorySource
+    from ml.scanner_db import ScannerDB
+    from ml.backfill_features import backfill_calendar_features
+
+    fixture = Path(__file__).parent / "fixtures" / "ff_calendar_sample.xml"
+    db_path = tmp_path / "scanner.db"
+    db = ScannerDB(db_path=str(db_path))
+
+    # Wire calendar history with FF fixture (live ops would also archive,
+    # but for this test we explicitly populate history).
+    store = CalendarStore(
+        source=ForexFactorySource(_offline_path=str(fixture)),
+        db_path=str(db_path),
+    )
+    store.refresh(force=True)
+    # Promote the live cache rows into history under the historical source
+    # so the backfill query sees them. (The live refresh already inserted
+    # them with source='ff_xml' — keep that and rely on the history rows.)
+
+    # Insert two scanner setups: one inside the FOMC imminent window, one
+    # well clear of it.
+    setup_inside_imminent = {
+        "id": "setup-inside",
+        "created_at": "2026-04-29T17:45:00+00:00",
+        "direction": "long",
+        "killzone": "NY_PM",
+        "analysis_json": json.dumps({"bias": "bullish"}),
+    }
+    setup_clear = {
+        "id": "setup-clear",
+        "created_at": "2026-04-29T14:00:00+00:00",
+        "direction": "short",
+        "killzone": "NY_AM",
+        "analysis_json": json.dumps({"bias": "bearish"}),
+    }
+    with sqlite3.connect(str(db_path)) as conn:
+        for s in (setup_inside_imminent, setup_clear):
+            conn.execute(
+                "INSERT INTO scanner_setups (id, created_at, status, "
+                "direction, killzone, analysis_json) "
+                "VALUES (?, ?, 'resolved', ?, ?, ?)",
+                (s["id"], s["created_at"], s["direction"],
+                 s["killzone"], s["analysis_json"]),
+            )
+        conn.commit()
+
+    n = backfill_calendar_features(db_path=str(db_path))
+    assert n == 2
+
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = {r["id"]: r for r in conn.execute(
+            "SELECT id, analysis_json FROM scanner_setups"
+        ).fetchall()}
+
+    inside = json.loads(rows["setup-inside"]["analysis_json"])
+    clear = json.loads(rows["setup-clear"]["analysis_json"])
+    assert inside["calendar_features"]["calendar_proximity_imminent"] == 1
+    assert inside["calendar_features"]["event_is_fomc"] == 1
+    assert clear["calendar_features"]["calendar_proximity_clear"] == 1
+    # Non-calendar fields untouched.
+    assert inside["bias"] == "bullish"
+    assert clear["bias"] == "bearish"
+
+
+def test_feature_backfill_idempotent(tmp_path):
+    import json
+    import sqlite3
+    from pathlib import Path
+    from ml.calendar import CalendarStore, ForexFactorySource
+    from ml.scanner_db import ScannerDB
+    from ml.backfill_features import backfill_calendar_features
+
+    fixture = Path(__file__).parent / "fixtures" / "ff_calendar_sample.xml"
+    db_path = tmp_path / "scanner.db"
+    ScannerDB(db_path=str(db_path))
+    store = CalendarStore(
+        source=ForexFactorySource(_offline_path=str(fixture)),
+        db_path=str(db_path),
+    )
+    store.refresh(force=True)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT INTO scanner_setups (id, created_at, status, "
+            "direction, analysis_json) "
+            "VALUES (?, ?, 'resolved', 'long', ?)",
+            ("s1", "2026-04-29T17:45:00+00:00", json.dumps({"bias": "bullish"})),
+        )
+        conn.commit()
+
+    n1 = backfill_calendar_features(db_path=str(db_path))
+    n2 = backfill_calendar_features(db_path=str(db_path))
+    assert n1 == 1
+    # Second run still updates the row but result is identical — accept any
+    # non-negative count, just confirm output stays consistent.
+    with sqlite3.connect(str(db_path)) as conn:
+        row = conn.execute(
+            "SELECT analysis_json FROM scanner_setups WHERE id='s1'"
+        ).fetchone()
+    payload = json.loads(row[0])
+    assert payload["calendar_features"]["calendar_proximity_imminent"] == 1
+
+
 # ── compute_atr tests ───────────────────────────────────────
 
 class TestComputeATR:
