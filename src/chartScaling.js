@@ -45,3 +45,16 @@ export function scaleXRange({ startRange, anchorIndex, deltaX, chartWidth, allCa
 
   return [newStart, newEnd];
 }
+
+export function panXRange({ startRange, deltaX, bandWidth, allCandleIndices }) {
+  const [startStart, startEnd] = startRange;
+  const span = startEnd - startStart + 1;
+  const candlesShift = Math.round(deltaX / bandWidth);
+
+  const firstIdx = allCandleIndices[0];
+  const lastIdx = allCandleIndices[allCandleIndices.length - 1];
+  let newStart = startStart - candlesShift;
+  newStart = Math.max(firstIdx, Math.min(lastIdx - span + 1, newStart));
+
+  return [newStart, newStart + span - 1];
+}

@@ -90,3 +90,43 @@ describe("scaleXRange", () => {
     expect(end).toBeLessThanOrEqual(59);
   });
 });
+
+import { panXRange } from "../chartScaling.js";
+
+describe("panXRange", () => {
+  const allIndices = Array.from({ length: 60 }, (_, i) => i);
+  const base = { startRange: [10, 29], bandWidth: 10, allCandleIndices: allIndices };
+
+  it("returns startRange unchanged when deltaX is 0", () => {
+    expect(panXRange({ ...base, deltaX: 0 })).toEqual([10, 29]);
+  });
+
+  it("dragging right shifts range left (showing earlier candles)", () => {
+    const [start, end] = panXRange({ ...base, deltaX: 50 }); // 50 / 10 = 5 candles right
+    expect(start).toBe(5);
+    expect(end).toBe(24);
+  });
+
+  it("dragging left shifts range right (showing later candles)", () => {
+    const [start, end] = panXRange({ ...base, deltaX: -50 });
+    expect(start).toBe(15);
+    expect(end).toBe(34);
+  });
+
+  it("clamps to first candle (cannot pan past start)", () => {
+    const [start, end] = panXRange({ ...base, deltaX: 1000 });
+    expect(start).toBe(0);
+    expect(end).toBe(19);
+  });
+
+  it("clamps to last candle (cannot pan past end)", () => {
+    const [start, end] = panXRange({ ...base, deltaX: -1000 });
+    expect(start).toBe(40);
+    expect(end).toBe(59);
+  });
+
+  it("preserves span size", () => {
+    const [start, end] = panXRange({ ...base, deltaX: 75 });
+    expect(end - start).toBe(19);
+  });
+});
