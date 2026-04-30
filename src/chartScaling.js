@@ -58,3 +58,36 @@ export function panXRange({ startRange, deltaX, bandWidth, allCandleIndices }) {
 
   return [newStart, newStart + span - 1];
 }
+
+export function wheelZoom({
+  startYDomain,
+  startXRange,
+  anchorPrice,
+  anchorIndex,
+  deltaY,
+  modifiers,
+  chartHeight,
+  chartWidth,
+  allCandleIndices,
+}) {
+  if (deltaY === 0) {
+    return { yDomain: startYDomain, xRange: startXRange };
+  }
+
+  const zoomDirection = deltaY > 0 ? 1 : -1;
+  const equivalentDeltaY = zoomDirection * chartHeight * 0.05;
+  const equivalentDeltaX = -zoomDirection * chartWidth * 0.05;
+
+  const updateY = !modifiers?.shift;
+  const updateX = !modifiers?.ctrl;
+
+  const yDomain = updateY
+    ? scaleYDomain({ startDomain: startYDomain, anchorPrice, deltaY: equivalentDeltaY, chartHeight })
+    : startYDomain;
+
+  const xRange = updateX
+    ? scaleXRange({ startRange: startXRange, anchorIndex, deltaX: equivalentDeltaX, chartWidth, allCandleIndices })
+    : startXRange;
+
+  return { yDomain, xRange };
+}

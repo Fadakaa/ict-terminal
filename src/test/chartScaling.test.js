@@ -130,3 +130,50 @@ describe("panXRange", () => {
     expect(end - start).toBe(19);
   });
 });
+
+import { wheelZoom } from "../chartScaling.js";
+
+describe("wheelZoom", () => {
+  const allIndices = Array.from({ length: 60 }, (_, i) => i);
+  const base = {
+    startYDomain: [100, 200],
+    startXRange: [0, 59],
+    anchorPrice: 150,
+    anchorIndex: 30,
+    chartHeight: 400,
+    chartWidth: 800,
+    allCandleIndices: allIndices,
+  };
+
+  it("plain wheel up zooms both axes in", () => {
+    const result = wheelZoom({ ...base, deltaY: -100, modifiers: {} });
+    expect(result.yDomain[1] - result.yDomain[0]).toBeLessThan(100);
+    expect(result.xRange[1] - result.xRange[0]).toBeLessThan(59);
+  });
+
+  it("plain wheel down zooms both axes out", () => {
+    const sub = { ...base, startXRange: [20, 39] };
+    const result = wheelZoom({ ...sub, deltaY: 100, modifiers: {} });
+    expect(result.yDomain[1] - result.yDomain[0]).toBeGreaterThan(100);
+    expect(result.xRange[1] - result.xRange[0]).toBeGreaterThanOrEqual(19);
+  });
+
+  it("Shift modifier zooms only X", () => {
+    const result = wheelZoom({ ...base, deltaY: -100, modifiers: { shift: true } });
+    expect(result.yDomain).toEqual(base.startYDomain);
+    expect(result.xRange[1] - result.xRange[0]).toBeLessThan(59);
+  });
+
+  it("Ctrl modifier zooms only Y", () => {
+    const result = wheelZoom({ ...base, deltaY: -100, modifiers: { ctrl: true } });
+    expect(result.xRange).toEqual(base.startXRange);
+    expect(result.yDomain[1] - result.yDomain[0]).toBeLessThan(100);
+  });
+
+  it("zero deltaY returns inputs unchanged", () => {
+    const result = wheelZoom({ ...base, deltaY: 0, modifiers: {} });
+    expect(result.yDomain[0]).toBeCloseTo(100);
+    expect(result.yDomain[1]).toBeCloseTo(200);
+    expect(result.xRange).toEqual([0, 59]);
+  });
+});
