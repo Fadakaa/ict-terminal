@@ -948,7 +948,13 @@ export default function App() {
     const g = svg.append("g").attr("transform", `translate(${m.left},${m.top})`);
     g.append("rect").attr("width", w).attr("height", h).attr("fill", "#06060e");
 
-    const x = d3.scaleBand().domain(candles.map((_, i) => i)).range([0, w]).padding(0.22);
+    const visibleArrayIndices = xManualRange
+      ? candles.reduce((acc, c, i) => {
+          if (c.candleIndex >= xManualRange[0] && c.candleIndex <= xManualRange[1]) acc.push(i);
+          return acc;
+        }, [])
+      : candles.map((_, i) => i);
+    const x = d3.scaleBand().domain(visibleArrayIndices).range([0, w]).padding(0.22);
 
     // Collect all prices for y-domain
     const allP = candles.flatMap((c) => [c.high, c.low]);
@@ -971,7 +977,8 @@ export default function App() {
 
     const [mn, mx] = d3.extent(allP);
     const pad = (mx - mn) * 0.09;
-    const y = d3.scaleLinear().domain([mn - pad, mx + pad]).range([h, 0]);
+    const yDomainAuto = [mn - pad, mx + pad];
+    const y = d3.scaleLinear().domain(yManualDomain ?? yDomainAuto).range([h, 0]);
 
     // Grid
     g.selectAll(".hg").data(y.ticks(7)).join("line")
@@ -1145,6 +1152,7 @@ export default function App() {
     // Candlesticks
     candles.forEach((c, i) => {
       const cx = x(i);
+      if (cx === undefined) return;
       const bw = x.bandwidth();
       const bull = c.close >= c.open;
       const col = bull ? "#26a69a" : "#ef5350";
@@ -1168,7 +1176,8 @@ export default function App() {
     chartScalesRef.current = { x, y, w, h, m };
 
     // Axes
-    const ticks = [0, Math.floor(candles.length * 0.25), Math.floor(candles.length * 0.5), Math.floor(candles.length * 0.75), candles.length - 1];
+    const tickPositions = [0, 0.25, 0.5, 0.75, 1];
+    const ticks = tickPositions.map((p) => visibleArrayIndices[Math.min(visibleArrayIndices.length - 1, Math.floor(p * (visibleArrayIndices.length - 1)))]);
     g.append("g").attr("transform", `translate(0,${h})`)
       .call(d3.axisBottom(x).tickValues(ticks).tickFormat((i) => {
         const c = candles[i]; if (!c) return "";
@@ -1189,7 +1198,7 @@ export default function App() {
         ax.selectAll(".tick line").attr("stroke", "#1a1a2e");
         ax.selectAll("text").attr("fill", "#444466").attr("font-size", "9px").attr("font-family", "monospace");
       });
-  }, [candles, analysis, calibration]);
+  }, [candles, analysis, calibration, yManualDomain, xManualRange]);
 
   useEffect(() => { drawChart(); }, [drawChart]);
   useEffect(() => {
