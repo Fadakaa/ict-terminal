@@ -11,6 +11,8 @@ import {
   computeATR,
   generateSetupId,
 } from "./market.js";
+import { useChartScale } from "./useChartScale.js";
+import { scaleYDomain, scaleXRange, panXRange, wheelZoom } from "./chartScaling.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -318,6 +320,16 @@ export default function App() {
   const [candles, setCandles] = useState([]);
   const [candles4h, setCandles4h] = useState([]);
   const [timeframe, setTimeframe] = useState("1h");
+  const {
+    yManualDomain,
+    setYManualDomain,
+    xManualRange,
+    setXManualRange,
+    reset: resetChartScale,
+    isManual: isChartManual,
+  } = useChartScale(timeframe);
+  const dragStateRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // ── API keys ──
   const [claudeKey, setClaudeKey] = useState(() => loadSaved("ict_claude_key", ""));
@@ -985,7 +997,11 @@ export default function App() {
     // visually project into empty future space. Standard ICT/TradingView convention.
     const FUTURE_BARS = Math.max(10, Math.ceil(candles.length * 0.2));
     const totalSlots = candles.length + FUTURE_BARS;
-    const x = d3.scaleBand().domain(Array.from({ length: totalSlots }, (_, i) => i)).range([0, w]).padding(0.22);
+    const allSlotIndices = Array.from({ length: totalSlots }, (_, i) => i);
+    const visibleArrayIndices = xManualRange
+      ? allSlotIndices.filter((i) => i >= xManualRange[0] && i <= xManualRange[1])
+      : allSlotIndices;
+    const x = d3.scaleBand().domain(visibleArrayIndices).range([0, w]).padding(0.22);
 
     // Collect all prices for y-domain
     const allP = candles.flatMap((c) => [c.high, c.low]);
@@ -1008,7 +1024,8 @@ export default function App() {
 
     const [mn, mx] = d3.extent(allP);
     const pad = (mx - mn) * 0.09;
-    const y = d3.scaleLinear().domain([mn - pad, mx + pad]).range([h, 0]);
+    const yDomainAuto = [mn - pad, mx + pad];
+    const y = d3.scaleLinear().domain(yManualDomain ?? yDomainAuto).range([h, 0]);
 
     // Grid
     g.selectAll(".hg").data(y.ticks(7)).join("line")
@@ -1192,6 +1209,7 @@ export default function App() {
     // Candlesticks
     candles.forEach((c, i) => {
       const cx = x(i);
+      if (cx === undefined) return;
       const bw = x.bandwidth();
       const bull = c.close >= c.open;
       const col = bull ? "#26a69a" : "#ef5350";
@@ -1215,7 +1233,8 @@ export default function App() {
     chartScalesRef.current = { x, y, w, h, m };
 
     // Axes
-    const ticks = [0, Math.floor(candles.length * 0.25), Math.floor(candles.length * 0.5), Math.floor(candles.length * 0.75), candles.length - 1];
+    const tickPositions = [0, 0.25, 0.5, 0.75, 1];
+    const ticks = tickPositions.map((p) => visibleArrayIndices[Math.min(visibleArrayIndices.length - 1, Math.floor(p * (visibleArrayIndices.length - 1)))]);
     g.append("g").attr("transform", `translate(0,${h})`)
       .call(d3.axisBottom(x).tickValues(ticks).tickFormat((i) => {
         const c = candles[i]; if (!c) return "";
@@ -1229,6 +1248,16 @@ export default function App() {
         ax.selectAll("text").attr("fill", "#444466").attr("font-size", "8px").attr("font-family", "monospace");
       });
     g.append("text").attr("x", w).attr("y", h + 22).attr("fill", "#444466").attr("font-size", "8px").attr("font-family", "monospace").attr("text-anchor", "end").text("GMT");
+    g.append("rect")
+      .attr("class", "x-axis-hit")
+      .attr("x", 0)
+      .attr("y", h)
+      .attr("width", w + m.right)
+      .attr("height", m.bottom)
+      .attr("fill", "transparent")
+      .style("cursor", "ew-resize")
+      .on("mousedown", (evt) => startDragRef.current?.("x-axis", evt))
+      .on("dblclick", () => setXManualRange(null));
     g.append("g")
       .call(d3.axisLeft(y).ticks(7).tickFormat((d) => d.toFixed(0)))
       .call((ax) => {
@@ -1236,7 +1265,117 @@ export default function App() {
         ax.selectAll(".tick line").attr("stroke", "#1a1a2e");
         ax.selectAll("text").attr("fill", "#444466").attr("font-size", "9px").attr("font-family", "monospace");
       });
-  }, [candles, analysis, calibration]);
+    g.append("rect")
+      .attr("class", "y-axis-hit")
+      .attr("x", -m.left)
+      .attr("y", 0)
+      .attr("width", m.left)
+      .attr("height", h)
+      .attr("fill", "transparent")
+      .style("cursor", "ns-resize")
+      .on("mousedown", (evt) => startDragRef.current?.("y-axis", evt))
+      .on("dblclick", () => setYManualDomain(null));
+  }, [candles, analysis, calibration, yManualDomain, xManualRange]);
+
+  const startDrag = useCallback((kind, evt) => {
+    const s = chartScalesRef.current;
+    if (!s || !candles.length) return;
+
+    const rect = svgRef.current.getBoundingClientRect();
+    const startMouseX = evt.clientX - rect.left - s.m.left;
+    const startMouseY = evt.clientY - rect.top - s.m.top;
+
+    // Match the slot count drawChart uses so manual range can include future space.
+    const FUTURE_BARS = Math.max(10, Math.ceil(candles.length * 0.2));
+    const totalSlots = candles.length + FUTURE_BARS;
+    const allCandleIndices = Array.from({ length: totalSlots }, (_, i) => i);
+    const firstIdx = allCandleIndices[0];
+    const lastIdx = allCandleIndices[allCandleIndices.length - 1];
+
+    let anchorPrice = null;
+    let anchorIndex = null;
+    if (kind === "y-axis") {
+      anchorPrice = s.y.invert(startMouseY);
+    } else if (kind === "x-axis" || kind === "pan") {
+      const step = s.x.step();
+      anchorIndex = Math.max(
+        0,
+        Math.min(Math.round((startMouseX - s.x.bandwidth() / 2) / step), totalSlots - 1)
+      );
+    }
+
+    if (kind === "pan" && xManualRange === null) return; // no-op in auto mode
+
+    dragStateRef.current = {
+      kind,
+      startMouseX,
+      startMouseY,
+      startYDomain: yManualDomain ?? [s.y.domain()[0], s.y.domain()[1]],
+      startXRange: xManualRange ?? [firstIdx, lastIdx],
+      anchorPrice,
+      anchorIndex,
+      chartHeight: s.h,
+      chartWidth: s.w,
+      bandWidth: s.x.bandwidth(),
+      allCandleIndices,
+      rectLeft: rect.left + s.m.left,
+      rectTop: rect.top + s.m.top,
+    };
+    setIsDragging(true);
+
+    const handleMove = (e) => {
+      const ds = dragStateRef.current;
+      if (!ds) return;
+      const dx = e.clientX - ds.rectLeft - ds.startMouseX;
+      const dy = e.clientY - ds.rectTop - ds.startMouseY;
+
+      if (ds.kind === "y-axis") {
+        setYManualDomain(
+          scaleYDomain({
+            startDomain: ds.startYDomain,
+            anchorPrice: ds.anchorPrice,
+            deltaY: dy,
+            chartHeight: ds.chartHeight,
+          })
+        );
+      } else if (ds.kind === "x-axis") {
+        setXManualRange(
+          scaleXRange({
+            startRange: ds.startXRange,
+            anchorIndex: ds.anchorIndex,
+            deltaX: dx,
+            chartWidth: ds.chartWidth,
+            allCandleIndices: ds.allCandleIndices,
+          })
+        );
+      } else if (ds.kind === "pan") {
+        setXManualRange(
+          panXRange({
+            startRange: ds.startXRange,
+            deltaX: dx,
+            bandWidth: ds.bandWidth,
+            allCandleIndices: ds.allCandleIndices,
+          })
+        );
+      }
+    };
+
+    const handleUp = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      dragStateRef.current = null;
+      setIsDragging(false);
+      if (svgRef.current) {
+        d3.select(svgRef.current).select(".crosshair").style("display", "none");
+      }
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  }, [candles, yManualDomain, xManualRange, setYManualDomain, setXManualRange, setIsDragging]);
+
+  const startDragRef = useRef(startDrag);
+  useEffect(() => { startDragRef.current = startDrag; }, [startDrag]);
 
   useEffect(() => { drawChart(); }, [drawChart]);
   useEffect(() => {
@@ -1244,6 +1383,23 @@ export default function App() {
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
   }, [drawChart]);
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handler = (e) => {
+      const s = chartScalesRef.current;
+      if (!s || !candles.length) return;
+      const rect = svg.getBoundingClientRect();
+      const mx = e.clientX - rect.left - s.m.left;
+      const my = e.clientY - rect.top - s.m.top;
+      if (mx >= 0 && mx <= s.w && my >= 0 && my <= s.h) {
+        e.preventDefault();
+      }
+    };
+    svg.addEventListener("wheel", handler, { passive: false });
+    return () => svg.removeEventListener("wheel", handler);
+  }, [candles.length]);
 
   // ═══════════════════════════════════════════════════════════
   //  STYLES
@@ -3511,6 +3667,15 @@ export default function App() {
             ))}
             <div style={{ width: 1, height: 16, background: "#14142a", margin: "0 3px" }} />
             <button style={btn(false)} onClick={() => fetchCandles(false)} disabled={loadingData}>{loadingData ? "..." : "↻ REFRESH"}</button>
+            {isChartManual && (
+              <button
+                style={btn(false, "#9370db")}
+                onClick={resetChartScale}
+                title="Reset chart scale to auto-fit"
+              >
+                ⊕ AUTO
+              </button>
+            )}
             <button style={btn(false, "#26a69a")} onClick={() => runAnalysis()} disabled={!!loadingStep || !candles.length}>
               {loadingStep ? `STEP ${loadingStep === "4h" ? "1/3" : loadingStep === "claude" ? "2/3" : "3/3"}...` : "⬡ RUN ICT ANALYSIS"}
             </button>
@@ -3533,8 +3698,28 @@ export default function App() {
 
           {/* Chart */}
           <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
-            <svg ref={svgRef} style={{ width: "100%", height: "100%", minHeight: 300, display: "block", cursor: "crosshair" }}
+            <svg ref={svgRef}
+              style={{
+                width: "100%", height: "100%", minHeight: 300, display: "block",
+                cursor: isDragging && dragStateRef.current?.kind === "pan" ? "grabbing"
+                      : isDragging ? "default"
+                      : (xManualRange ? "grab" : "crosshair"),
+              }}
+              onMouseDown={(e) => {
+                const s = chartScalesRef.current;
+                if (!s) return;
+                const rect = svgRef.current.getBoundingClientRect();
+                const mx = e.clientX - rect.left - s.m.left;
+                const my = e.clientY - rect.top - s.m.top;
+                if (mx < 0 || mx > s.w || my < 0 || my > s.h) return;
+                startDrag("pan", e);
+              }}
               onMouseMove={(e) => {
+                if (dragStateRef.current) {
+                  d3.select(svgRef.current).select(".crosshair").style("display", "none");
+                  return;
+                }
+                // ── existing crosshair logic — KEEP EVERYTHING BELOW UNCHANGED ──
                 const s = chartScalesRef.current;
                 if (!s || !candles.length) return;
                 const rect = svgRef.current.getBoundingClientRect();
@@ -3558,6 +3743,39 @@ export default function App() {
                 ch.select(".ch-time").attr("x", cx).text(`${+mo}/${+dy} ${tt?.slice(0, 5) || "00:00"}`);
                 ch.select(".ch-ohlc").attr("fill", bull ? "#26a69a" : "#ef5350")
                   .text(`O ${c.open.toFixed(2)}  H ${c.high.toFixed(2)}  L ${c.low.toFixed(2)}  C ${c.close.toFixed(2)}`);
+              }}
+              onWheel={(e) => {
+                const s = chartScalesRef.current;
+                if (!s || !candles.length) return;
+                const rect = svgRef.current.getBoundingClientRect();
+                const mx = e.clientX - rect.left - s.m.left;
+                const my = e.clientY - rect.top - s.m.top;
+                if (mx < 0 || mx > s.w || my < 0 || my > s.h) return;
+                // preventDefault for page scroll is handled by the native listener in Step 2
+
+                const FUTURE_BARS = Math.max(10, Math.ceil(candles.length * 0.2));
+                const totalSlots = candles.length + FUTURE_BARS;
+                const allCandleIndices = Array.from({ length: totalSlots }, (_, i) => i);
+                const firstIdx = allCandleIndices[0];
+                const lastIdx = allCandleIndices[allCandleIndices.length - 1];
+                const step = s.x.step();
+                const anchorIndex = Math.max(0, Math.min(Math.round((mx - s.x.bandwidth() / 2) / step), totalSlots - 1));
+                const anchorPrice = s.y.invert(my);
+
+                const result = wheelZoom({
+                  startYDomain: yManualDomain ?? [s.y.domain()[0], s.y.domain()[1]],
+                  startXRange: xManualRange ?? [firstIdx, lastIdx],
+                  anchorPrice,
+                  anchorIndex,
+                  deltaY: e.deltaY,
+                  modifiers: { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey },
+                  chartHeight: s.h,
+                  chartWidth: s.w,
+                  allCandleIndices,
+                });
+
+                if (!e.ctrlKey && !e.metaKey) setXManualRange(result.xRange);
+                if (!e.shiftKey) setYManualDomain(result.yDomain);
               }}
               onMouseLeave={() => { if (svgRef.current) d3.select(svgRef.current).select(".crosshair").style("display", "none"); }}
             />
