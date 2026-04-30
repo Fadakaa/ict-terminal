@@ -1,6 +1,7 @@
 """Tests for Priority 8: Cost-Per-Winner Optimization."""
 import json
 import os
+from datetime import datetime, timedelta
 import pytest
 from unittest.mock import MagicMock
 
@@ -268,13 +269,14 @@ class TestScanDecisions:
 
 class TestRecomputeFromDB:
     def test_recompute_populates_segments(self, tmp_tracker):
+        recent_ts = (datetime.utcnow() - timedelta(days=2)).isoformat()
         mock_db = MagicMock()
         mock_db.get_resolved_with_costs.return_value = [
             {"timeframe": "1h", "killzone": "london", "outcome": "tp1",
-             "pnl_rr": 2.5, "api_cost_usd": 0.25, "resolved_at": "2026-03-28T10:00:00",
+             "pnl_rr": 2.5, "api_cost_usd": 0.25, "resolved_at": recent_ts,
              "setup_quality": "B"},
             {"timeframe": "1h", "killzone": "london", "outcome": "stopped_out",
-             "pnl_rr": -1.0, "api_cost_usd": 0.25, "resolved_at": "2026-03-28T12:00:00",
+             "pnl_rr": -1.0, "api_cost_usd": 0.25, "resolved_at": recent_ts,
              "setup_quality": "B"},
         ]
         result = tmp_tracker.recompute_from_db(mock_db)
@@ -283,21 +285,24 @@ class TestRecomputeFromDB:
         assert result["global"]["total_trades"] == 2
 
     def test_recompute_excludes_old_data(self, tmp_tracker):
+        recent_ts = (datetime.utcnow() - timedelta(days=2)).isoformat()
+        old_ts = (datetime.utcnow() - timedelta(days=40)).isoformat()
         mock_db = MagicMock()
         mock_db.get_resolved_with_costs.return_value = [
             # Old setup — outside DATA_WINDOW_DAYS
             {"timeframe": "1h", "killzone": "london", "outcome": "tp1",
-             "pnl_rr": 2.5, "api_cost_usd": 0.25, "resolved_at": "2025-01-01T10:00:00",
+             "pnl_rr": 2.5, "api_cost_usd": 0.25, "resolved_at": old_ts,
              "setup_quality": "B"},
             # Recent setup
             {"timeframe": "1h", "killzone": "london", "outcome": "tp1",
-             "pnl_rr": 2.5, "api_cost_usd": 0.25, "resolved_at": "2026-03-28T10:00:00",
+             "pnl_rr": 2.5, "api_cost_usd": 0.25, "resolved_at": recent_ts,
              "setup_quality": "B"},
         ]
         result = tmp_tracker.recompute_from_db(mock_db)
         assert result["segments"]["1h_london"]["total_trades"] == 1
 
     def test_recompute_generates_recommendations(self, tmp_tracker):
+        recent_ts = (datetime.utcnow() - timedelta(days=2)).isoformat()
         mock_db = MagicMock()
         setups = []
         for i in range(MIN_SEGMENT_SAMPLES):
@@ -306,7 +311,7 @@ class TestRecomputeFromDB:
                 "outcome": "tp1" if i % 2 == 0 else "stopped_out",
                 "pnl_rr": 2.0 if i % 2 == 0 else -1.0,
                 "api_cost_usd": 0.20,
-                "resolved_at": "2026-03-28T10:00:00",
+                "resolved_at": recent_ts,
                 "setup_quality": "B",
             })
         mock_db.get_resolved_with_costs.return_value = setups
