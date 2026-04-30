@@ -40,3 +40,53 @@ describe("scaleYDomain", () => {
     expect(huge[1] - huge[0]).toBeLessThanOrEqual(1000); // 10 * 100
   });
 });
+
+import { scaleXRange } from "../chartScaling.js";
+
+describe("scaleXRange", () => {
+  const allIndices = Array.from({ length: 60 }, (_, i) => i); // candleIndex 0..59
+  const base = { startRange: [0, 59], anchorIndex: 30, chartWidth: 800, allCandleIndices: allIndices };
+
+  it("returns startRange unchanged when deltaX is 0", () => {
+    const [start, end] = scaleXRange({ ...base, deltaX: 0 });
+    expect(start).toBe(0);
+    expect(end).toBe(59);
+  });
+
+  it("dragging right shrinks the visible range (zoom in)", () => {
+    const [start, end] = scaleXRange({ ...base, deltaX: 200 });
+    expect(end - start).toBeLessThan(59);
+  });
+
+  it("dragging left expands toward full range (zoom out, capped)", () => {
+    const sub = { ...base, startRange: [20, 39] };
+    const [start, end] = scaleXRange({ ...sub, deltaX: -200, anchorIndex: 30 });
+    expect(end - start).toBeGreaterThan(19);
+  });
+
+  it("clamps span to minimum of 5 candles", () => {
+    const [start, end] = scaleXRange({ ...base, deltaX: 10000 });
+    expect(end - start + 1).toBeGreaterThanOrEqual(5);
+  });
+
+  it("clamps span to total candle count", () => {
+    const [start, end] = scaleXRange({ ...base, deltaX: -10000 });
+    expect(end - start + 1).toBeLessThanOrEqual(60);
+    expect(start).toBe(0);
+    expect(end).toBe(59);
+  });
+
+  it("anchor candle stays at same fractional position", () => {
+    // Anchor near the right edge: position should remain near right edge after zoom
+    const [start, end] = scaleXRange({ ...base, anchorIndex: 50, deltaX: 200 });
+    const span = end - start + 1;
+    const fraction = (50 - start) / (span - 1);
+    expect(fraction).toBeCloseTo((50 - 0) / (59 - 0), 1);
+  });
+
+  it("clamps newStart so newEnd does not exceed last candle", () => {
+    // Anchor near right edge, zoom in (smaller span) — start should shift left, not push end past 59
+    const [start, end] = scaleXRange({ ...base, anchorIndex: 58, deltaX: 200 });
+    expect(end).toBeLessThanOrEqual(59);
+  });
+});
