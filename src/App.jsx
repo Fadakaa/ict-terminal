@@ -299,6 +299,7 @@ export default function App() {
     isManual: isChartManual,
   } = useChartScale(timeframe);
   const dragStateRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // ── API keys ──
   const [claudeKey, setClaudeKey] = useState(() => loadSaved("ict_claude_key", ""));
@@ -1263,6 +1264,7 @@ export default function App() {
       rectLeft: rect.left + s.m.left,
       rectTop: rect.top + s.m.top,
     };
+    setIsDragging(true);
 
     const handleMove = (e) => {
       const ds = dragStateRef.current;
@@ -1305,6 +1307,7 @@ export default function App() {
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("mouseup", handleUp);
       dragStateRef.current = null;
+      setIsDragging(false);
       if (svgRef.current) {
         d3.select(svgRef.current).select(".crosshair").style("display", "none");
       }
@@ -1312,7 +1315,7 @@ export default function App() {
 
     window.addEventListener("mousemove", handleMove);
     window.addEventListener("mouseup", handleUp);
-  }, [candles, yManualDomain, xManualRange, setYManualDomain, setXManualRange]);
+  }, [candles, yManualDomain, xManualRange, setYManualDomain, setXManualRange, setIsDragging]);
 
   const startDragRef = useRef(startDrag);
   useEffect(() => { startDragRef.current = startDrag; }, [startDrag]);
@@ -3612,8 +3615,28 @@ export default function App() {
 
           {/* Chart */}
           <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
-            <svg ref={svgRef} style={{ width: "100%", height: "100%", minHeight: 300, display: "block", cursor: "crosshair" }}
+            <svg ref={svgRef}
+              style={{
+                width: "100%", height: "100%", minHeight: 300, display: "block",
+                cursor: isDragging && dragStateRef.current?.kind === "pan" ? "grabbing"
+                      : isDragging ? "default"
+                      : (xManualRange ? "grab" : "crosshair"),
+              }}
+              onMouseDown={(e) => {
+                const s = chartScalesRef.current;
+                if (!s) return;
+                const rect = svgRef.current.getBoundingClientRect();
+                const mx = e.clientX - rect.left - s.m.left;
+                const my = e.clientY - rect.top - s.m.top;
+                if (mx < 0 || mx > s.w || my < 0 || my > s.h) return;
+                startDrag("pan", e);
+              }}
               onMouseMove={(e) => {
+                if (dragStateRef.current) {
+                  d3.select(svgRef.current).select(".crosshair").style("display", "none");
+                  return;
+                }
+                // ── existing crosshair logic — KEEP EVERYTHING BELOW UNCHANGED ──
                 const s = chartScalesRef.current;
                 if (!s || !candles.length) return;
                 const rect = svgRef.current.getBoundingClientRect();
