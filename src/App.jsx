@@ -12,6 +12,7 @@ import {
   generateSetupId,
 } from "./market.js";
 import { useChartScale } from "./useChartScale.js";
+import { scaleYDomain, scaleXRange, panXRange, wheelZoom } from "./chartScaling.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -1198,7 +1199,113 @@ export default function App() {
         ax.selectAll(".tick line").attr("stroke", "#1a1a2e");
         ax.selectAll("text").attr("fill", "#444466").attr("font-size", "9px").attr("font-family", "monospace");
       });
+    g.append("rect")
+      .attr("class", "y-axis-hit")
+      .attr("x", -m.left)
+      .attr("y", 0)
+      .attr("width", m.left)
+      .attr("height", h)
+      .attr("fill", "transparent")
+      .style("cursor", "ns-resize")
+      .on("mousedown", (evt) => startDragRef.current?.("y-axis", evt))
+      .on("dblclick", () => setYManualDomain(null));
   }, [candles, analysis, calibration, yManualDomain, xManualRange]);
+
+  const startDrag = useCallback((kind, evt) => {
+    const s = chartScalesRef.current;
+    if (!s || !candles.length) return;
+
+    const rect = svgRef.current.getBoundingClientRect();
+    const startMouseX = evt.clientX - rect.left - s.m.left;
+    const startMouseY = evt.clientY - rect.top - s.m.top;
+
+    const allCandleIndices = candles.map((c) => c.candleIndex);
+    const firstIdx = allCandleIndices[0];
+    const lastIdx = allCandleIndices[allCandleIndices.length - 1];
+
+    let anchorPrice = null;
+    let anchorIndex = null;
+    if (kind === "y-axis") {
+      anchorPrice = s.y.invert(startMouseY);
+    } else if (kind === "x-axis" || kind === "pan") {
+      const step = s.x.step();
+      const arrIdx = Math.max(
+        0,
+        Math.min(Math.round((startMouseX - s.x.bandwidth() / 2) / step), candles.length - 1)
+      );
+      anchorIndex = candles[arrIdx]?.candleIndex ?? firstIdx;
+    }
+
+    if (kind === "pan" && xManualRange === null) return; // no-op in auto mode
+
+    dragStateRef.current = {
+      kind,
+      startMouseX,
+      startMouseY,
+      startYDomain: yManualDomain ?? [s.y.domain()[0], s.y.domain()[1]],
+      startXRange: xManualRange ?? [firstIdx, lastIdx],
+      anchorPrice,
+      anchorIndex,
+      chartHeight: s.h,
+      chartWidth: s.w,
+      bandWidth: s.x.bandwidth(),
+      allCandleIndices,
+      rectLeft: rect.left + s.m.left,
+      rectTop: rect.top + s.m.top,
+    };
+
+    const handleMove = (e) => {
+      const ds = dragStateRef.current;
+      if (!ds) return;
+      const dx = e.clientX - ds.rectLeft - ds.startMouseX;
+      const dy = e.clientY - ds.rectTop - ds.startMouseY;
+
+      if (ds.kind === "y-axis") {
+        setYManualDomain(
+          scaleYDomain({
+            startDomain: ds.startYDomain,
+            anchorPrice: ds.anchorPrice,
+            deltaY: dy,
+            chartHeight: ds.chartHeight,
+          })
+        );
+      } else if (ds.kind === "x-axis") {
+        setXManualRange(
+          scaleXRange({
+            startRange: ds.startXRange,
+            anchorIndex: ds.anchorIndex,
+            deltaX: dx,
+            chartWidth: ds.chartWidth,
+            allCandleIndices: ds.allCandleIndices,
+          })
+        );
+      } else if (ds.kind === "pan") {
+        setXManualRange(
+          panXRange({
+            startRange: ds.startXRange,
+            deltaX: dx,
+            bandWidth: ds.bandWidth,
+            allCandleIndices: ds.allCandleIndices,
+          })
+        );
+      }
+    };
+
+    const handleUp = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      dragStateRef.current = null;
+      if (svgRef.current) {
+        d3.select(svgRef.current).select(".crosshair").style("display", "none");
+      }
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  }, [candles, yManualDomain, xManualRange, setYManualDomain, setXManualRange]);
+
+  const startDragRef = useRef(startDrag);
+  useEffect(() => { startDragRef.current = startDrag; }, [startDrag]);
 
   useEffect(() => { drawChart(); }, [drawChart]);
   useEffect(() => {
