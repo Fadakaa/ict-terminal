@@ -1327,6 +1327,23 @@ export default function App() {
     return () => window.removeEventListener("resize", handler);
   }, [drawChart]);
 
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handler = (e) => {
+      const s = chartScalesRef.current;
+      if (!s || !candles.length) return;
+      const rect = svg.getBoundingClientRect();
+      const mx = e.clientX - rect.left - s.m.left;
+      const my = e.clientY - rect.top - s.m.top;
+      if (mx >= 0 && mx <= s.w && my >= 0 && my <= s.h) {
+        e.preventDefault();
+      }
+    };
+    svg.addEventListener("wheel", handler, { passive: false });
+    return () => svg.removeEventListener("wheel", handler);
+  }, [candles.length]);
+
   // ═══════════════════════════════════════════════════════════
   //  STYLES
   // ═══════════════════════════════════════════════════════════
@@ -3660,6 +3677,38 @@ export default function App() {
                 ch.select(".ch-time").attr("x", cx).text(`${+mo}/${+dy} ${tt?.slice(0, 5) || "00:00"}`);
                 ch.select(".ch-ohlc").attr("fill", bull ? "#26a69a" : "#ef5350")
                   .text(`O ${c.open.toFixed(2)}  H ${c.high.toFixed(2)}  L ${c.low.toFixed(2)}  C ${c.close.toFixed(2)}`);
+              }}
+              onWheel={(e) => {
+                const s = chartScalesRef.current;
+                if (!s || !candles.length) return;
+                const rect = svgRef.current.getBoundingClientRect();
+                const mx = e.clientX - rect.left - s.m.left;
+                const my = e.clientY - rect.top - s.m.top;
+                if (mx < 0 || mx > s.w || my < 0 || my > s.h) return;
+                // preventDefault for page scroll is handled by the native listener in Step 2
+
+                const allCandleIndices = candles.map((c) => c.candleIndex);
+                const firstIdx = allCandleIndices[0];
+                const lastIdx = allCandleIndices[allCandleIndices.length - 1];
+                const step = s.x.step();
+                const arrIdx = Math.max(0, Math.min(Math.round((mx - s.x.bandwidth() / 2) / step), candles.length - 1));
+                const anchorIndex = candles[arrIdx]?.candleIndex ?? firstIdx;
+                const anchorPrice = s.y.invert(my);
+
+                const result = wheelZoom({
+                  startYDomain: yManualDomain ?? [s.y.domain()[0], s.y.domain()[1]],
+                  startXRange: xManualRange ?? [firstIdx, lastIdx],
+                  anchorPrice,
+                  anchorIndex,
+                  deltaY: e.deltaY,
+                  modifiers: { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey },
+                  chartHeight: s.h,
+                  chartWidth: s.w,
+                  allCandleIndices,
+                });
+
+                if (!e.ctrlKey && !e.metaKey) setXManualRange(result.xRange);
+                if (!e.shiftKey) setYManualDomain(result.yDomain);
               }}
               onMouseLeave={() => { if (svgRef.current) d3.select(svgRef.current).select(".crosshair").style("display", "none"); }}
             />
