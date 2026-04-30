@@ -30,7 +30,12 @@ from ml.features import (
     _encode_timeframe,
     _intermarket_or_nan,
 )
-from ml.dataset import TrainingDatasetManager
+
+# ml.dataset imports ml.config which loads ``python-dotenv`` — that's heavy
+# and only needed by run_backfill()/backfill_regimes()/backfill_intermarket().
+# backfill_calendar_features() runs stage 2 of the day-one bootstrap and must
+# work in a minimal venv (e.g. the py312 backfill environment) so we lazy-
+# import TrainingDatasetManager inside the functions that actually need it.
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +339,7 @@ def run_backfill(apply: bool = False, replace: bool = False) -> dict:
         print(f"  {o}: {count}")
 
     if apply:
+        from ml.dataset import TrainingDatasetManager  # lazy — see top-of-file note
         mgr = TrainingDatasetManager()
         if replace:
             # Remove existing live rows
@@ -484,6 +490,7 @@ def backfill_regimes(apply: bool = False) -> dict:
         print(f"  {label}: {count}")
 
     if apply:
+        from ml.dataset import TrainingDatasetManager  # lazy — see top-of-file note
         mgr = TrainingDatasetManager()
         df = mgr._df
 
@@ -685,6 +692,7 @@ def backfill_intermarket(apply: bool = False) -> dict:
         print(f"  Yield direction: up={yields_up}, down={yields_dn}, flat={yields_flat}")
 
     if apply:
+        from ml.dataset import TrainingDatasetManager  # lazy — see top-of-file note
         mgr = TrainingDatasetManager()
         df = mgr._df
 
@@ -737,5 +745,66 @@ if __name__ == "__main__":
         backfill_regimes(apply=apply)
     elif "--intermarket" in sys.argv:
         backfill_intermarket(apply=apply)
+    elif "--calendar" in sys.argv:
+        # Day-one only — see docs/superpowers/specs/forex-calendar-integration.
+        n = backfill_calendar_features(db_path=_get_db_path())
+        print(f"[CALENDAR-FEATURES] Re-extracted features on {n} setups.")
     else:
         run_backfill(apply=apply, replace=replace)
+
+
+def backfill_calendar_features(db_path: str) -> int:
+    """Re-extract the 18 calendar feature columns for every resolved setup.
+
+    Reads each setup's stored ``analysis_json``, reconstructs proximity at the
+    setup's ``created_at`` against ``forex_calendar_history``, and writes the
+    new feature dict back under ``analysis_json["calendar_features"]``. All
+    other keys in ``analysis_json`` are preserved.
+
+    Idempotent — running twice produces identical output.
+
+    Returns the number of setups updated.
+    """
+    from datetime import datetime, timezone
+    from ml.calendar import HistoricalCalendarView
+    from ml.features import _extract_calendar_features
+
+    view = HistoricalCalendarView(db_path)
+    updated = 0
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, created_at, analysis_json FROM scanner_setups "
+            "WHERE created_at IS NOT NULL"
+        ).fetchall()
+
+        for row in rows:
+            try:
+                ts = datetime.fromisoformat(row["created_at"])
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+
+            feats = _extract_calendar_features(view, ts)
+
+            raw = row["analysis_json"]
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    payload = json.loads(raw)
+                    if not isinstance(payload, dict):
+                        payload = {}
+                except json.JSONDecodeError:
+                    payload = {}
+            else:
+                payload = {}
+
+            payload["calendar_features"] = feats
+            conn.execute(
+                "UPDATE scanner_setups SET analysis_json = ? WHERE id = ?",
+                (json.dumps(payload), row["id"]),
+            )
+            updated += 1
+        conn.commit()
+    logger.info("[CALENDAR-FEATURES] re-extracted %d setups", updated)
+    return updated

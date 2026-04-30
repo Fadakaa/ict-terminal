@@ -231,3 +231,119 @@ class TestPostResolutionScan:
         # Check that recent_context kwarg was passed
         call_kwargs = mock_engine._analyze_and_store.call_args
         assert "recent_context" in call_kwargs.kwargs or len(call_kwargs.args) > 4
+
+
+class TestCalendarContext:
+    """Task 8 — calendar_context plumbed from scanner into prompt builder."""
+
+    def test_build_calendar_context_imminent(self, mock_engine, tmp_path):
+        from datetime import timezone
+        from pathlib import Path
+        from ml.calendar import CalendarStore, ForexFactorySource
+        from ml.scanner_db import init_db
+
+        fixture = Path(__file__).parent / "fixtures" / "ff_calendar_sample.xml"
+        # Wire a calendar store backed by the fixture, sharing the engine's DB.
+        init_db(mock_engine.db.db_path)
+        store = CalendarStore(
+            source=ForexFactorySource(_offline_path=str(fixture)),
+            db_path=mock_engine.db.db_path,
+        )
+        store.refresh(force=True)
+        mock_engine._calendar_store = store
+
+        # 25 minutes before FOMC (2026-04-29 17:35 UTC) → imminent.
+        ctx = mock_engine._build_calendar_context(
+            now=datetime(2026, 4, 29, 17, 35, tzinfo=timezone.utc),
+        )
+        assert ctx is not None
+        assert ctx["proximity"]["state"] == "imminent"
+        # Multiple events at 18:00 in fixture; just confirm one is upcoming.
+        assert ctx["proximity"]["next_event"] is not None
+        assert ctx["proximity"]["next_event"]["category"] == "fomc"
+        assert any(e["category"] == "fomc" for e in ctx["upcoming"])
+
+    def test_build_calendar_context_handles_missing_store(self, mock_engine):
+        """If CalendarStore can't initialise (e.g. network missing in tests),
+        the helper returns None and the caller renders the prompt without a
+        calendar block."""
+        # Force the engine's lazy initialiser to fail.
+        mock_engine._calendar_store = None
+        with patch("ml.calendar.ForexFactorySource",
+                   side_effect=RuntimeError("offline")):
+            assert mock_engine._build_calendar_context() is None
+
+
+class TestSetupCalendarProximity:
+    """Task 9 — Layer 2 attaches calendar_proximity to setup analysis dict."""
+
+    def _wire_store(self, mock_engine):
+        from datetime import timezone
+        from pathlib import Path
+        from ml.calendar import CalendarStore, ForexFactorySource
+        from ml.scanner_db import init_db
+
+        fixture = Path(__file__).parent / "fixtures" / "ff_calendar_sample.xml"
+        init_db(mock_engine.db.db_path)
+        store = CalendarStore(
+            source=ForexFactorySource(_offline_path=str(fixture)),
+            db_path=mock_engine.db.db_path,
+        )
+        store.refresh(force=True)
+        mock_engine._calendar_store = store
+
+    def test_attach_proximity_imminent(self, mock_engine):
+        from datetime import timezone
+        self._wire_store(mock_engine)
+        analysis = {"bias": "bullish", "setup_quality": "A"}
+        result = mock_engine.attach_calendar_proximity(
+            analysis,
+            now=datetime(2026, 4, 29, 17, 35, tzinfo=timezone.utc),
+        )
+        assert result is analysis  # mutates in place
+        prox = analysis["calendar_proximity"]
+        assert prox["state"] == "imminent"
+        assert prox["next_event_minutes"] is not None
+        assert prox["next_event_minutes"] < 30
+        assert prox["next_event_category"] == "fomc"
+        assert prox["warning"] is not None
+
+    def test_attach_proximity_does_not_suppress_setup(self, mock_engine):
+        """Attaching proximity must NEVER drop the setup or downgrade quality.
+        Layer 2 is warnings only; Layer 3 is deferred per spec."""
+        from datetime import timezone
+        self._wire_store(mock_engine)
+        analysis = {"bias": "bullish", "setup_quality": "A",
+                    "entry": {"price": 2400.0}}
+        original = dict(analysis)
+        mock_engine.attach_calendar_proximity(
+            analysis,
+            now=datetime(2026, 4, 29, 17, 35, tzinfo=timezone.utc),
+        )
+        # Every original key untouched.
+        for k, v in original.items():
+            assert analysis[k] == v
+        # And the warning rode along.
+        assert "calendar_proximity" in analysis
+
+    def test_attach_proximity_clear_state(self, mock_engine):
+        from datetime import timezone
+        self._wire_store(mock_engine)
+        analysis = {"bias": "bullish"}
+        mock_engine.attach_calendar_proximity(
+            analysis,
+            now=datetime(2026, 4, 29, 14, 0, tzinfo=timezone.utc),
+        )
+        prox = analysis["calendar_proximity"]
+        assert prox["state"] == "clear"
+        assert prox["warning"] is None
+
+    def test_attach_proximity_no_store_returns_unchanged(self, mock_engine):
+        analysis = {"bias": "bullish"}
+        # No calendar store wired and the lazy initialiser is forced to fail.
+        mock_engine._calendar_store = None
+        with patch("ml.calendar.ForexFactorySource",
+                   side_effect=RuntimeError("offline")):
+            result = mock_engine.attach_calendar_proximity(analysis)
+        assert result is analysis
+        assert "calendar_proximity" not in analysis

@@ -40,7 +40,8 @@ def build_enhanced_ict_prompt(candles_1h: list, candles_4h: list,
                               htf_label: str | None = None,
                               key_levels: dict | None = None,
                               weekly_narrative: dict | None = None,
-                              weekly_matched_level: dict | None = None) -> str:
+                              weekly_matched_level: dict | None = None,
+                              calendar_context: dict | None = None) -> str:
     """Build the enhanced multi-timeframe ICT analysis prompt.
 
     Args:
@@ -173,7 +174,7 @@ CURRENT KILLZONE: {current_kz}
 EXECUTION CANDLES ({len(h1_slim)} candles):
 {json.dumps(h1_slim)}
 
-{_build_intermarket_section(intermarket)}{_build_regime_section(regime_context)}{_build_setup_context_section(setup_context)}{_build_recent_context_section(recent_context)}{_build_narrative_state_section(prev_narrative, invalidation_status)}{_build_ml_context_section(ml_context)}{_build_key_levels_section(key_levels)}ANALYSIS FRAMEWORK:
+{_build_intermarket_section(intermarket)}{_build_regime_section(regime_context)}{_build_setup_context_section(setup_context)}{_build_recent_context_section(recent_context)}{_build_calendar_section(calendar_context)}{_build_narrative_state_section(prev_narrative, invalidation_status)}{_build_ml_context_section(ml_context)}{_build_key_levels_section(key_levels)}ANALYSIS FRAMEWORK:
 1. Determine the 4H dealing range (recent swing high to swing low). Is price in premium (upper half) or discount (lower half)?
 2. Has 4H sell-side or buy-side liquidity been swept recently? This determines the Power of 3 phase.
 3. Check KEY LEVELS: Has PDH/PDL been swept? Has the Asia session high/low been raided? A sweep of these levels followed by reversal is a high-probability entry signal (Judas swing). Price position relative to PDH/PDL and PWH/PWL determines premium/discount context.
@@ -723,6 +724,60 @@ def _build_recent_context_section(recent_context: dict | None) -> str:
         return format_recent_context(recent_context)
     except Exception:
         return ""
+
+
+def _build_calendar_section(calendar_context: dict | None) -> str:
+    """Build the ECONOMIC CALENDAR section for the prompt.
+
+    Frames upcoming/recent USD high-impact news inside the ICT manipulation
+    lens — calendar prints are the typical catalyst for the
+    accumulation→manipulation→distribution sequence, so a setup forming inside
+    a caution/imminent window should be read as more likely to be the
+    manipulation leg than continuation.
+    """
+    if not calendar_context:
+        return ""
+
+    proximity = calendar_context.get("proximity") or {}
+    upcoming = calendar_context.get("upcoming") or []
+    recent = calendar_context.get("recent") or []
+
+    if proximity.get("state") == "clear" and not upcoming and not recent:
+        return (
+            "\n## ECONOMIC CALENDAR\n\n"
+            "No high-impact USD events in the next 24h. Calendar clear.\n"
+        )
+
+    lines = ["\n## ECONOMIC CALENDAR (next 24h, USD high-impact)\n"]
+    state = (proximity.get("state") or "clear").upper()
+    warning = proximity.get("warning")
+    if warning:
+        lines.append(f"Current state: {state} — {warning}.\n")
+
+    if upcoming:
+        lines.append("Upcoming:")
+        for e in upcoming[:5]:
+            lines.append(
+                f"  • {e.get('time_utc', '')} (in {e.get('minutes_to_next', '?')}m) — "
+                f"{e.get('title', '')} [{(e.get('impact') or '').upper()}] "
+                f"forecast {e.get('forecast') or '—'}, "
+                f"prev {e.get('previous') or '—'}"
+            )
+    if recent:
+        lines.append("\nRecent (last 24h):")
+        for e in recent[:3]:
+            lines.append(
+                f"  • {e.get('time_utc', '')} ({e.get('minutes_since', '?')}m ago) — "
+                f"{e.get('title', '')} [{(e.get('impact') or '').upper()}]"
+            )
+
+    lines.append(
+        "\nICT framing: high-impact news is the typical catalyst for "
+        "accumulation→manipulation→distribution. If a setup is forming inside "
+        "the caution/imminent window, weight the manipulation interpretation "
+        "more heavily than continuation.\n"
+    )
+    return "\n".join(lines)
 
 
 def _build_setup_context_section(setup_context: dict | None) -> str:

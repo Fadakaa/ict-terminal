@@ -4,7 +4,8 @@ Every function that produces or consumes feature dicts MUST use these names.
 Imported by: features.py, claude_bridge.py, training.py, backfill.py
 """
 
-# All 58 feature columns in canonical order
+# All 77 feature columns in canonical order
+# (59 base + 18 forex calendar — Task 11)
 FEATURE_COLUMNS = [
     # Order Blocks (7)
     "ob_count",
@@ -78,6 +79,25 @@ FEATURE_COLUMNS = [
     "price_vs_pwl_atr",           # (price - PWL) / ATR
     "price_vs_asia_high_atr",     # (price - Asia H) / ATR
     "price_vs_asia_low_atr",      # (price - Asia L) / ATR
+    # Forex calendar — magnitude (3) + proximity one-hot (4) + category one-hot (11)
+    "mins_to_next_high_impact",     # minutes to next USD high-impact event (clamp 1440 if none)
+    "mins_since_last_high_impact",  # minutes since last USD high-impact event (clamp 1440)
+    "news_density_24h",             # count of high-impact USD events in next 24h
+    "calendar_proximity_clear",       # one-hot proximity state
+    "calendar_proximity_post_event",
+    "calendar_proximity_caution",
+    "calendar_proximity_imminent",
+    "event_is_nfp",                 # one-hot category of next/active event
+    "event_is_cpi",
+    "event_is_ppi",
+    "event_is_fomc",
+    "event_is_fed_speak",
+    "event_is_gdp",
+    "event_is_ism",
+    "event_is_retail_sales",
+    "event_is_unemployment",
+    "event_is_jolts",
+    "event_is_other_high",
 ]
 
 FEATURE_SET = set(FEATURE_COLUMNS)

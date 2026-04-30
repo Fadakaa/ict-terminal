@@ -10,3 +10,7 @@ requests>=2.31
 apscheduler>=3.10.0
 python-dotenv>=1.0.0
 json-repair>=0.30.0
+# market-calendar-tool — one-shot historical FF backfill (ml/calendar_backfill.py).
+# Pinned upstream to pyarrow<18,>=17 which has no Python 3.13 wheel; install in a
+# Python 3.12 venv only when running the day-one backfill (see CLAUDE.md).
+# market-calendar-tool>=0.1.0

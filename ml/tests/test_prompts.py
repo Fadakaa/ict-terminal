@@ -14,6 +14,60 @@ def _make_candles(n):
     ]
 
 
+# ---- Task 7 — calendar_context block -----------------------------------
+
+def test_prompt_includes_calendar_block_when_caution():
+    calendar_context = {
+        "proximity": {
+            "state": "caution",
+            "next_event": {
+                "title": "Non-Farm Employment Change",
+                "minutes_to_next": 47,
+                "forecast": "250K",
+                "previous": "228K",
+                "impact": "high",
+            },
+            "warning": "NFP releases in 47 minutes",
+        },
+        "upcoming": [
+            {"time_utc": "2026-03-10 13:30 UTC",
+             "minutes_to_next": 47,
+             "title": "Non-Farm Employment Change",
+             "impact": "high",
+             "forecast": "250K", "previous": "228K"},
+        ],
+        "recent": [],
+    }
+    prompt = build_enhanced_ict_prompt(
+        _make_candles(10), _make_candles(5),
+        calendar_context=calendar_context,
+    )
+    assert "ECONOMIC CALENDAR" in prompt
+    assert "NFP" in prompt or "Non-Farm" in prompt
+    assert "47" in prompt
+    assert "ICT framing" in prompt or "manipulation" in prompt.lower()
+
+
+def test_prompt_calendar_block_omitted_when_clear_and_no_events():
+    calendar_context = {
+        "proximity": {"state": "clear", "next_event": None, "warning": None},
+        "upcoming": [],
+        "recent": [],
+    }
+    prompt = build_enhanced_ict_prompt(
+        _make_candles(10), _make_candles(5),
+        calendar_context=calendar_context,
+    )
+    p = prompt.lower()
+    assert ("no high-impact usd events" in p) or ("calendar clear" in p)
+
+
+def test_prompt_works_without_calendar_context():
+    """Backward compat — existing callers must not break."""
+    prompt = build_enhanced_ict_prompt(_make_candles(10), _make_candles(5))
+    assert prompt
+
+
 class TestBuildEnhancedPrompt:
 
     def test_returns_string(self):

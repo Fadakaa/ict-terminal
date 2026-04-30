@@ -85,7 +85,9 @@ def _encode_setup_quality(analysis: dict) -> int:
 def extract_features(analysis: dict, candles: list[dict], timeframe: str,
                      intermarket: dict = None,
                      calibration: dict = None,
-                     key_levels: dict = None) -> dict:
+                     key_levels: dict = None,
+                     calendar_store=None,
+                     now=None) -> dict:
     """Extract ML features from an ICT analysis JSON + candle data.
 
     All price-distance features are normalised by ATR(14) so the model
@@ -97,6 +99,11 @@ def extract_features(analysis: dict, candles: list[dict], timeframe: str,
         timeframe: e.g. "15min", "1h", "4h"
         intermarket: Optional intermarket context dict
         calibration: Optional calibration result dict (for Opus narrative)
+        calendar_store: Optional ml.calendar.CalendarStore — when None, calendar
+                        features fall back to safe defaults (clear proximity,
+                        no upcoming event).
+        now: Optional datetime to override "now" (UTC) when computing calendar
+             features. Defaults to ``datetime.now(timezone.utc)``.
     """
     atr = compute_atr(candles, 14)
     if atr == 0:
@@ -272,6 +279,8 @@ def extract_features(analysis: dict, candles: list[dict], timeframe: str,
         **_extract_narrative_features(analysis, calibration),
         # Key level proximity (6) — ATR-normalised distance to ICT levels
         **_extract_key_level_features(entry_price, atr, key_levels),
+        # Forex calendar features (18) — magnitude + proximity + category
+        **_extract_calendar_features(calendar_store, now),
     }
 
 
@@ -1424,3 +1433,78 @@ def engineer_htf_features(candles: list[dict], idx: int, direction: str,
         "htf_last_candle_type": htf_last_candle_type,
         "htf_last_candle_strength": htf_last_candle_strength,
     }
+
+
+# ── Calendar features (Task 12) ────────────────────────────
+
+_CALENDAR_CATEGORIES = (
+    "nfp", "cpi", "ppi", "fomc", "fed_speak", "gdp", "ism",
+    "retail_sales", "unemployment", "jolts", "other_high",
+)
+_CALENDAR_PROXIMITY_STATES = ("clear", "post_event", "caution", "imminent")
+_NO_EVENT_CLAMP_MINS = 1440  # 24h sentinel for "no event in window"
+
+
+def _empty_calendar_features() -> dict:
+    """Safe defaults: clear proximity, no event in window. Used when calendar
+    store is unavailable (test environments, network down, etc.)."""
+    feats = {
+        "mins_to_next_high_impact": _NO_EVENT_CLAMP_MINS,
+        "mins_since_last_high_impact": _NO_EVENT_CLAMP_MINS,
+        "news_density_24h": 0,
+    }
+    for state in _CALENDAR_PROXIMITY_STATES:
+        feats[f"calendar_proximity_{state}"] = 1 if state == "clear" else 0
+    for cat in _CALENDAR_CATEGORIES:
+        feats[f"event_is_{cat}"] = 0
+    return feats
+
+
+def _extract_calendar_features(calendar_store, now) -> dict:
+    """Extract the 18 forex-calendar feature columns.
+
+    The category one-hot reflects the **next** high-impact event when there
+    is one in the upcoming window, else the **most recent** event in the
+    rear window. Proximity state separately tells the model whether that
+    event is current/impending or distant.
+    """
+    if calendar_store is None:
+        return _empty_calendar_features()
+
+    from datetime import datetime, timezone
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    try:
+        proximity = calendar_store.proximity(now)
+        upcoming = calendar_store.upcoming(hours=24, now=now)
+    except Exception:
+        return _empty_calendar_features()
+
+    feats = _empty_calendar_features().copy()
+
+    if proximity.minutes_to_next is not None:
+        feats["mins_to_next_high_impact"] = int(round(
+            min(proximity.minutes_to_next, _NO_EVENT_CLAMP_MINS)
+        ))
+    if proximity.minutes_since_last is not None:
+        feats["mins_since_last_high_impact"] = int(round(
+            min(proximity.minutes_since_last, _NO_EVENT_CLAMP_MINS)
+        ))
+    feats["news_density_24h"] = len(upcoming)
+
+    # Proximity one-hot
+    for state in _CALENDAR_PROXIMITY_STATES:
+        feats[f"calendar_proximity_{state}"] = (
+            1 if proximity.state == state else 0
+        )
+
+    # Category one-hot — prefer the next event, fall back to the last event.
+    relevant_event = proximity.next_event or proximity.last_event
+    if relevant_event is not None:
+        cat = relevant_event.category
+        if cat not in _CALENDAR_CATEGORIES:
+            cat = "other_high"
+        feats[f"event_is_{cat}"] = 1
+
+    return feats

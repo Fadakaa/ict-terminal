@@ -38,6 +38,28 @@ class TestTrainingDatasetManager:
              "max_favorable_atr": 3.0, "max_drawdown_atr": 0.8},
         ]
 
+    def test_dataset_ingests_calendar_features(self, dm):
+        """Calendar columns round-trip through ingest_live_trade → parquet
+        → get_blended_dataset (Task 13)."""
+        from ml.feature_schema import FEATURE_COLUMNS
+        baseline = {c: 0.0 for c in FEATURE_COLUMNS}
+        baseline["event_is_fomc"] = 1
+        baseline["calendar_proximity_imminent"] = 1
+        baseline["calendar_proximity_clear"] = 0
+        baseline["mins_to_next_high_impact"] = 15
+        baseline["news_density_24h"] = 3
+
+        dm.ingest_live_trade(
+            features=baseline, outcome="tp1_hit",
+            mfe=3.0, mae=0.5, pnl=2.5,
+        )
+        df = dm.get_blended_dataset(live_only=True)
+        assert "event_is_fomc" in df.columns
+        assert "calendar_proximity_imminent" in df.columns
+        assert df.iloc[-1]["event_is_fomc"] == 1
+        assert df.iloc[-1]["calendar_proximity_imminent"] == 1
+        assert df.iloc[-1]["mins_to_next_high_impact"] == 15
+
     def test_ingest_wfo_trades(self, dm, sample_wfo_trades):
         count = dm.ingest_wfo_trades(sample_wfo_trades)
         assert count == 3

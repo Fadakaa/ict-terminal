@@ -4,6 +4,31 @@ import math
 from ml.config import make_test_config
 
 
+def pytest_configure(config):
+    """Register custom markers used by the calendar backfill cross-source check."""
+    config.addinivalue_line(
+        "markers",
+        "integration: network/live-data tests; run manually with -m integration",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip ``@pytest.mark.integration`` tests unless explicitly requested.
+
+    The default ``pytest`` run is hermetic; integration tests hit live
+    services and require network plus optional packages (``market-calendar-tool``).
+    Run them manually with ``-m integration``.
+    """
+    if config.getoption("-m") and "integration" in config.getoption("-m"):
+        return
+    skip_integration = pytest.mark.skip(
+        reason="integration test — run manually with -m integration"
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)
+
+
 @pytest.fixture
 def test_config(tmp_path):
     return make_test_config(

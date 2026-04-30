@@ -1,9 +1,15 @@
 """Tests for FastAPI ML server endpoints."""
+from datetime import datetime, timezone
+from pathlib import Path
+
 import pytest
 from unittest.mock import patch, MagicMock
 from ml.server import app, get_db, get_dataset_manager
 from ml.database import TradeLogger
 from ml.config import make_test_config
+
+
+_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "ff_calendar_sample.xml"
 
 
 @pytest.fixture
@@ -352,3 +358,74 @@ class TestDeleteSetupEndpoint:
     def test_delete_setup_not_found(self, client):
         r = client.delete("/delete-setup/nonexistent")
         assert r.status_code == 404
+
+
+# ── Task 14 — Forex Calendar endpoints ────────────────────────
+
+
+@pytest.fixture
+def calendar_client(tmp_logger, tmp_path, empty_dataset_manager):
+    """Variant of ``client`` that points the shared scanner at an isolated DB
+    and wires a fixture-backed calendar store onto it."""
+    from ml.calendar import CalendarStore, ForexFactorySource
+    from ml.scanner_db import ScannerDB
+    from ml.scanner import ScannerEngine
+
+    app.dependency_overrides[get_db] = lambda: tmp_logger
+    app.dependency_overrides[get_dataset_manager] = lambda: empty_dataset_manager
+
+    test_cfg = make_test_config(
+        db_path=str(tmp_path / "test_scanner.db"),
+        model_dir=str(tmp_path / "models"),
+    )
+    scanner_db = ScannerDB(db_path=str(tmp_path / "test_scanner.db"))
+    engine = ScannerEngine(db=scanner_db)
+    store = CalendarStore(
+        source=ForexFactorySource(_offline_path=str(_FIXTURE_PATH)),
+        db_path=scanner_db.db_path,
+    )
+    store.refresh(force=True)
+    engine._calendar_store = store
+
+    from starlette.testclient import TestClient
+    with patch("ml.server.get_config", return_value=test_cfg), \
+         patch("ml.server._get_scanner", return_value=engine):
+        yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def test_calendar_upcoming_endpoint(calendar_client):
+    r = calendar_client.get("/calendar/upcoming?hours=72")
+    assert r.status_code == 200
+    body = r.json()
+    assert "events" in body and "count" in body
+    # Fixture has multiple USD high-impact events; at least one should land
+    # in any 72h window straddling the fixture's date.
+    # Just confirm the shape, not the count (depends on test runtime).
+    if body["events"]:
+        assert "title" in body["events"][0]
+        assert "category" in body["events"][0]
+
+
+def test_calendar_proximity_endpoint(calendar_client):
+    r = calendar_client.get("/calendar/proximity")
+    assert r.status_code == 200
+    body = r.json()
+    assert "state" in body
+    assert body["state"] in {"clear", "caution", "imminent",
+                             "post_event", "unavailable"}
+
+
+def test_calendar_refresh_endpoint(calendar_client):
+    r = calendar_client.post("/calendar/refresh")
+    assert r.status_code == 200
+    body = r.json()
+    assert "updated" in body
+
+
+def test_calendar_stats_endpoint(calendar_client):
+    r = calendar_client.get("/calendar/stats?days=365")
+    assert r.status_code == 200
+    body = r.json()
+    assert "by_category" in body
+    assert "total" in body

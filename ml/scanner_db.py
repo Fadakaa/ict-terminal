@@ -146,6 +146,57 @@ class ScannerDB:
             """)
             conn.execute("INSERT OR IGNORE INTO daily_drawdown (id) VALUES (1)")
 
+            # Forex calendar — current-window cache (overwritten/upserted by refresh)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS forex_calendar (
+                    event_id        TEXT PRIMARY KEY,
+                    timestamp_utc   TEXT NOT NULL,
+                    currency        TEXT NOT NULL,
+                    impact          TEXT NOT NULL,
+                    title           TEXT NOT NULL,
+                    category        TEXT NOT NULL,
+                    forecast        TEXT,
+                    previous        TEXT,
+                    actual          TEXT,
+                    fetched_at      TEXT NOT NULL,
+                    source          TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_forex_calendar_ts "
+                "ON forex_calendar(timestamp_utc)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_forex_calendar_impact_ts "
+                "ON forex_calendar(impact, timestamp_utc)"
+            )
+
+            # Forex calendar history — append-only archive across refreshes/backfills
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS forex_calendar_history (
+                    event_id        TEXT NOT NULL,
+                    archived_at     TEXT NOT NULL,
+                    timestamp_utc   TEXT NOT NULL,
+                    currency        TEXT NOT NULL,
+                    impact          TEXT NOT NULL,
+                    title           TEXT NOT NULL,
+                    category        TEXT NOT NULL,
+                    forecast        TEXT,
+                    previous        TEXT,
+                    actual          TEXT,
+                    source          TEXT NOT NULL DEFAULT 'ff_xml',
+                    PRIMARY KEY (event_id, archived_at)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_forex_calendar_history_ts "
+                "ON forex_calendar_history(timestamp_utc)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_forex_calendar_history_source "
+                "ON forex_calendar_history(source)"
+            )
+
     def _conn(self):
         return sqlite3.connect(self.db_path)
 
@@ -669,3 +720,14 @@ class ScannerDB:
                     pass
         d["auto_resolved"] = bool(d.get("auto_resolved", 0))
         return d
+
+
+def init_db(db_path: str) -> ScannerDB:
+    """Module-level helper to construct a ScannerDB and initialise its schema.
+
+    Mirrors the ergonomics expected by ml/calendar tests and backfill tooling.
+    Equivalent to ``ScannerDB(db_path)`` — kept as a thin wrapper so calendar
+    integration code can depend on a stable function reference rather than the
+    class constructor.
+    """
+    return ScannerDB(db_path)

@@ -39,7 +39,9 @@ Flow: Candles → Claude (identifies setup) → /calibrate (adjusts levels) → 
 | `feature_schema.py` | Single source of truth for all 52 ML feature column names |
 | `narrative_state.py` | Narrative State Engine — persistent per-timeframe thesis tracking across scan cycles with invalidation detection, prediction scoring, and anti-anchoring safeguards |
 | `recent_context.py` | Context-Aware Scanner — builds recent context (resolutions, consumed zones, swept liquidity, active setups) for prompt enrichment |
-| `backfill_features.py` | Retroactive feature enrichment — re-extracts 52-col features from stored analysis/calibration JSON, backfills regime + intermarket from OANDA |
+| `backfill_features.py` | Retroactive feature enrichment — re-extracts 52-col features from stored analysis/calibration JSON, backfills regime + intermarket from OANDA. Also exposes `backfill_calendar_features()` for the calendar day-one bootstrap. |
+| `calendar.py` | Forex calendar integration — FF XML source, `CalendarStore` (cache + query API + archive), `HistoricalCalendarView` (read-only history adapter), `ProximityStatus` classification (clear / caution / imminent / post_event). Single live source: ForexFactory. Hourly refresh by scheduler. Used by prompt builder, scanner metadata, notification warnings, and ML feature extraction (18 calendar columns). |
+| `calendar_backfill.py` | One-shot day-one historical backfill via `market-calendar-tool`. NOT used during live ops — invoked manually once to import 6 months of FF history into `forex_calendar_history`, re-extract calendar features for stored setups, and trigger a retrain. See "Forex Calendar Integration" section below for the runbook. |
 
 ## Run Commands
 
@@ -83,21 +85,31 @@ python -m uvicorn ml.server:app --reload --port 8000
 | `/lifecycle/recent` | GET | Recent notification lifecycle events across all theses |
 | `/lifecycle/thesis/{id}` | GET | Full lifecycle journey for a specific thesis |
 | `/context/recent` | GET | Recent context (resolutions, consumed zones, swept liquidity) |
+| `/calendar/upcoming` | GET | Upcoming USD high-impact events (next N hours) |
+| `/calendar/recent` | GET | USD high-impact events in the last N hours (with `actual` results) |
+| `/calendar/proximity` | GET | Current `ProximityStatus` snapshot (state + warning + next/last events) |
+| `/calendar/refresh` | POST | Force-refresh the FF XML cache. Returns `{rate_limited: true}` on 429. |
+| `/calendar/stats` | GET | Per-category event counts over the last `days` window (default 30). |
 
 ## Testing
 
 ```bash
-python -m pytest ml/tests/ -v              # Full suite (842+ tests)
+python -m pytest ml/tests/ -v              # Full suite (~1280 tests)
 python -m pytest ml/tests/test_seed.py     # Seed harvester tests
 python -m pytest ml/tests/test_claude_bridge.py  # Bridge tests
 python -m pytest ml/tests/test_calibrate.py      # Calibrator tests
 python -m pytest ml/tests/test_prompts.py        # Prompt tests
+python -m pytest ml/tests/test_calendar.py       # Calendar source/store/proximity tests
+python -m pytest ml/tests/test_calendar_backfill.py  # Historical backfill tests
 ```
+
+`@pytest.mark.integration` tests (e.g. `test_backfill_matches_live_xml_for_overlap_week`) are skipped by default — they hit the live FF feed and require `market-calendar-tool`. Run with `pytest -m integration` when needed.
 
 ## Completed Setup Actions
 
 - **Bayesian state reset** (2026-03-25): Reset to V1 priors (alpha=8.92, beta=11.08, 44.6% WR). Scanner trades no longer update Bayesian beliefs (`source="scanner"` skips the update in `claude_bridge.py`). Only live trades update beliefs.
 - **OANDA API token regenerated** (2026-03-25): New token generated and updated in `.env`.
+- **Forex calendar day-one backfill** (2026-04-30): 6 months of FF historical events imported into `forex_calendar_history` (45 USD high-impact events across NFP/FOMC/CPI/GDP/ISM/etc.); calendar features re-extracted onto 534 stored setups. Live ops use the FF XML feed; the historical import is one-shot only (see "Forex Calendar Integration" runbook below).
 
 ## Data Provider
 
@@ -138,7 +150,80 @@ Build: `npm run build` (must run on Mac, not in sandbox — architecture mismatc
 
 Intelligence Panel tabs: ML, BAYES, SESSIONS, ACCURACY, P&L, PROP, LOG.
 
-The ML tab displays: classifier status, AutoGluon model info, dataset composition, backtest fidelity, calibration layer performance, Bayesian drift, API cost tracking, active prospects, and scanner status.
+The ML tab displays: classifier status, AutoGluon model info, dataset composition, backtest fidelity, calibration layer performance, Bayesian drift, API cost tracking, active prospects, **forex calendar (state pill + next 3 events + manual refresh button)**, and scanner status.
+
+## Forex Calendar Integration
+
+Single live source: **ForexFactory weekly XML feed** (`https://nfs.faireconomy.media/ff_calendar_thisweek.xml`). Times are already UTC — no ET→UTC conversion. Encoding is `windows-1252`. Date format is US `MM-DD-YYYY`.
+
+The system applies calendar awareness across four layers, all driven by `ml/calendar.py`:
+
+| Layer | Where | Behavior |
+|---|---|---|
+| **1. Prompt context** | `prompts.py` (`_build_calendar_section`) | Adds an `ECONOMIC CALENDAR` block listing upcoming/recent USD high-impact events with ICT framing ("manipulation catalyst") so Claude weighs the manipulation interpretation more heavily inside caution/imminent windows |
+| **2. Setup metadata + warnings** | `scanner.py` (`attach_calendar_proximity`), `notifications.py` (`build_notification_message`) | Attaches `calendar_proximity` to every stored setup. Notifications during caution/imminent windows render a `⚠ CAUTION/WARNING` line with the event title + minutes-to-next. **Warnings only — never suppresses or downgrades a setup.** |
+| **3. Grade adjustments** | (deferred) | Static grade-downgrade rules NOT implemented. Will be added later from learned weights in `setup_profiles.py` if data shows them adding value. |
+| **4. ML features** | `features.py` (`_extract_calendar_features`), `feature_schema.py` | 18 new columns: 3 magnitude (`mins_to_next_high_impact`, `mins_since_last_high_impact`, `news_density_24h`) + 4 proximity one-hot (`calendar_proximity_clear/post_event/caution/imminent`) + 11 category one-hot (`event_is_nfp/cpi/ppi/fomc/fed_speak/gdp/ism/retail_sales/unemployment/jolts/other_high`). FEATURE_COLUMNS goes 59 → 77. |
+
+### Proximity classification
+
+`CalendarStore.proximity(ts)` returns one of four states with this precedence:
+
+1. **imminent** — next event ≤ 30 min away
+2. **caution** — next event ≤ 90 min away
+3. **post_event** — last event ≤ 90 min ago (and no next event in caution/imminent window)
+4. **clear** — otherwise
+
+Imminent eclipses post_event because upcoming manipulation risk is more actionable than residual settlement noise.
+
+### Database tables
+
+| Table | Source field | Purpose |
+|---|---|---|
+| `forex_calendar` | always `ff_xml` | Current-window cache. Upserted by `CalendarStore.refresh()`. |
+| `forex_calendar_history` | `ff_xml` (live snapshots) **or** `ff_historical` (one-shot day-one backfill) | Append-only archive. PK is `(event_id, archived_at)`. Used by `HistoricalCalendarView` for feature backfill against past timestamps. |
+
+### Scheduler
+
+`_refresh_calendar_job` runs every 60 minutes (registered in `scheduler.py`). Uses a browser User-Agent to avoid faireconomy.media's CDN throttling Python's default `urllib` UA. 429s are logged and skipped — the next tick retries. The job only registers when `start_scheduler()` boots, which requires OANDA + Anthropic credentials.
+
+### One-shot day-one backfill (`ml/calendar_backfill.py`)
+
+The backfill is **not** part of live ops. It's a one-time bootstrap that imports 6 months of historical FF events (so ML features have a meaningful history) and immediately retrains the AutoGluon classifier with calendar columns active.
+
+**Dependency caveat:** `market-calendar-tool` 0.2.x pins `pyarrow<18,>=17`, which has no Python 3.13 wheel. Install the package in a separate Python 3.12 venv just for the backfill — your live `~/dealfinder` (3.13) venv stays untouched.
+
+**Runbook:**
+
+```bash
+# 1. Set up the py312 venv (one-time)
+python3.12 -m venv ~/dealfinder-py312
+source ~/dealfinder-py312/bin/activate
+pip install --upgrade pip "setuptools<80"
+pip install pandas requests python-dotenv "market-calendar-tool>=0.1.0"
+
+# 2. Run stages 1+2 (historical archive + feature re-extract) in py312
+cd ~/ict-terminal
+python -m ml.calendar_backfill --months 6 \
+    --db ~/ict-terminal/ml/models/scanner.db \
+    --skip-retrain
+
+# 3. Run stage 3 (retrain) back in py313 — AutoGluon doesn't fit in the py312 venv
+source ~/dealfinder/bin/activate
+curl -s -X POST http://localhost:8000/retrain
+# (or run train_classifier directly if the server isn't up)
+```
+
+The backfill is idempotent — running stage 1 twice produces zero new rows. Stage 2 is also safe to re-run; it overwrites `analysis_json["calendar_features"]` with the same values.
+
+### Notes on 0.2.x API
+
+`market-calendar-tool` 0.2.x changed the API in three ways relative to 0.1.x:
+- `site` argument now requires the `Site` enum, not a string
+- `scrape_calendar` returns a `ScrapeResult` whose `.base` is the DataFrame
+- Column names differ from the live XML feed (`name` vs `title`, `impactName` vs `impact`, `timeLabel` vs `time`) **and times come back in UTC+1, not UTC** — the scraper hits an `apply-settings/1` endpoint that defaults to GMT+1
+
+`_scrape` in `calendar_backfill.py` handles all three: it imports `Site`, unwraps `result.base`, renames columns, and `_parse_row_timestamp` detects abbreviated-month dates (`"Apr 29, 2026"`) and applies a `-1h` offset so historical rows align with live UTC timestamps. The cross-source consistency test (`test_backfill_matches_live_xml_for_overlap_week`, marker `integration`) verifies this empirically against the live feed.
 
 ## V3 Roadmap — Self-Improving Feedback Loops
 

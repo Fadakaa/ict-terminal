@@ -1697,6 +1697,140 @@ def cost_per_winner_recompute():
     return engine._cpw_tracker.recompute_from_db(engine.db)
 
 
+# ── Forex Calendar Endpoints (Task 14) ──
+
+
+@app.get("/calendar/upcoming")
+def calendar_upcoming(hours: int = 24, min_impact: str = "high"):
+    """High-impact USD events in the next ``hours`` window."""
+    engine = _get_scanner()
+    store = engine.calendar_store
+    if store is None:
+        return {"events": [], "count": 0,
+                "warning": "calendar store unavailable"}
+    events = store.upcoming(hours=hours, min_impact=min_impact)
+    payload = [
+        {
+            "event_id": e.event_id,
+            "timestamp_utc": e.timestamp_utc.isoformat(),
+            "currency": e.currency,
+            "impact": e.impact,
+            "title": e.title,
+            "category": e.category,
+            "forecast": e.forecast,
+            "previous": e.previous,
+        }
+        for e in events
+    ]
+    return {"events": payload, "count": len(payload)}
+
+
+@app.get("/calendar/recent")
+def calendar_recent(hours: int = 24, min_impact: str = "high"):
+    """High-impact USD events in the last ``hours`` window."""
+    engine = _get_scanner()
+    store = engine.calendar_store
+    if store is None:
+        return {"events": [], "count": 0,
+                "warning": "calendar store unavailable"}
+    events = store.recent(hours=hours, min_impact=min_impact)
+    payload = [
+        {
+            "event_id": e.event_id,
+            "timestamp_utc": e.timestamp_utc.isoformat(),
+            "currency": e.currency,
+            "impact": e.impact,
+            "title": e.title,
+            "category": e.category,
+            "forecast": e.forecast,
+            "previous": e.previous,
+            "actual": e.actual,
+        }
+        for e in events
+    ]
+    return {"events": payload, "count": len(payload)}
+
+
+@app.get("/calendar/proximity")
+def calendar_proximity():
+    """Current ``ProximityStatus`` snapshot."""
+    engine = _get_scanner()
+    store = engine.calendar_store
+    if store is None:
+        return {"state": "unavailable", "warning": "calendar store unavailable"}
+    from datetime import datetime, timezone
+    p = store.proximity(datetime.now(timezone.utc))
+    return {
+        "state": p.state,
+        "warning": p.warning,
+        "minutes_to_next": p.minutes_to_next,
+        "minutes_since_last": p.minutes_since_last,
+        "next_event": (None if p.next_event is None else {
+            "title": p.next_event.title,
+            "category": p.next_event.category,
+            "impact": p.next_event.impact,
+            "timestamp_utc": p.next_event.timestamp_utc.isoformat(),
+            "forecast": p.next_event.forecast,
+            "previous": p.next_event.previous,
+        }),
+        "last_event": (None if p.last_event is None else {
+            "title": p.last_event.title,
+            "category": p.last_event.category,
+            "impact": p.last_event.impact,
+            "timestamp_utc": p.last_event.timestamp_utc.isoformat(),
+            "actual": p.last_event.actual,
+        }),
+    }
+
+
+@app.post("/calendar/refresh")
+def calendar_refresh():
+    """Force a calendar refresh from the FF feed and return updated row count."""
+    import traceback
+    import urllib.error
+    engine = _get_scanner()
+    store = engine.calendar_store
+    if store is None:
+        return {"updated": 0, "warning": "calendar store unavailable"}
+    try:
+        n = store.refresh(force=True)
+        return {"updated": n}
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            return {"updated": 0, "rate_limited": True,
+                    "warning": "ForexFactory rate-limited the request; "
+                               "retry in a few minutes"}
+        return {"updated": 0, "error": f"HTTP {e.code}: {e.reason}",
+                "error_type": "HTTPError"}
+    except Exception as e:
+        return {
+            "updated": 0,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": traceback.format_exc().splitlines()[-12:],
+        }
+
+
+@app.get("/calendar/stats")
+def calendar_stats(days: int = 30):
+    """Per-category event counts over the last ``days`` from history table."""
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    engine = _get_scanner()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with sqlite3.connect(engine.db.db_path) as conn:
+        rows = conn.execute(
+            "SELECT category, COUNT(DISTINCT event_id) "
+            "FROM forex_calendar_history "
+            "WHERE timestamp_utc >= ? "
+            "GROUP BY category",
+            (cutoff,),
+        ).fetchall()
+    by_category = {cat: cnt for cat, cnt in rows}
+    return {"by_category": by_category, "days": days,
+            "total": sum(by_category.values())}
+
+
 # ── Notification Lifecycle + Recent Context ──
 
 
