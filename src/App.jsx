@@ -1093,17 +1093,21 @@ export default function App() {
           .attr("opacity", isFilled ? 0.4 : (isMech ? 1 : 0.7)).text(label);
       });
 
-      // Liquidity levels — anchored at formation candle, project forward
-      analysis.liquidity?.forEach((liq) => {
+      // Liquidity levels — grouped by (type, price-bucket, tf) so duplicate labels collapse to ×N
+      const liqGroups = groupLiquidityByLevel(analysis.liquidity || [], 0.50);
+      liqGroups.forEach((group) => {
+        const liq = group.items[0]; // representative — leftmost candleIndex after group sort
+        const count = group.items.length;
         const lCol = liq.type === "buyside" ? "#f5c842" : "#ff6b6b";
         const lci = Math.max(0, Math.min(liq.candleIndex ?? 0, candles.length - 1));
         const lx = x(lci) ?? 0;
         g.append("line").attr("x1", lx).attr("x2", w).attr("y1", y(liq.price)).attr("y2", y(liq.price))
           .attr("stroke", lCol).attr("stroke-width", 1).attr("stroke-dasharray", "7,4").attr("opacity", 0.8);
         const liqTfTag = liq.tf ? ` ${liq.tf}` : "";
+        const countTag = count > 1 ? ` ×${count}` : "";
         g.append("text").attr("x", w + 3).attr("y", y(liq.price) + 4)
           .attr("fill", lCol).attr("font-size", "8px").attr("font-family", "monospace")
-          .text(`${liq.type === "buyside" ? "BSL" : "SSL"}${liqTfTag}`);
+          .text(`${liq.type === "buyside" ? "BSL" : "SSL"}${liqTfTag}${countTag}`);
       });
 
       // ── 4H Dealing Range markers ──
