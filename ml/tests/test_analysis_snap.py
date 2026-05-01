@@ -153,3 +153,76 @@ class TestIdempotency:
         assert diag2["snapped_fvgs"] == 0
         assert diag2["snapped_liquidity"] == 0
         assert out2 == out  # structural equality
+
+
+class TestCalibrateEndpointIntegration:
+    def test_calibrate_snaps_analysis_and_returns_diagnostics(self):
+        """Hitting /calibrate with diverged OBs returns snap_diagnostics in the response."""
+        from starlette.testclient import TestClient
+        from ml.server import app
+
+        # Build candles where candle[1] has high=4598.5, low=4584.0
+        candles = [
+            {"datetime": f"2026-04-30 {i:02d}:00:00",
+             "open": 4580 + i, "high": 4598.5 if i == 1 else 4595 + i,
+             "low": 4584.0 if i == 1 else 4580 + i, "close": 4590 + i}
+            for i in range(60)
+        ]
+        # Claude returns OB with high/low diverged by ~$60 from candle[1] wick
+        analysis = {
+            "bias": "bullish",
+            "orderBlocks": [
+                {"type": "bullish", "high": 4540.0, "low": 4520.0, "candleIndex": 1, "tf": "1H"},
+            ],
+            "fvgs": [],
+            "liquidity": [],
+            "entry": {"price": 4590.0, "direction": "long", "rationale": "test"},
+            "stopLoss": {"price": 4580.0, "rationale": "test"},
+            "takeProfits": [{"price": 4610.0, "rationale": "test", "rr": 2.0}],
+            "killzone": "London",
+            "confluences": ["test"],
+        }
+
+        with TestClient(app) as client:
+            r = client.post("/calibrate", json={"analysis": analysis, "candles": candles})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert "snap_diagnostics" in body
+        assert body["snap_diagnostics"]["snapped_obs"] == 1
+        assert body["snap_diagnostics"]["dropped_obs"] == 0
+        # The first delta should record the OB snap
+        deltas = body["snap_diagnostics"]["deltas"]
+        assert any(d["kind"] == "ob" and d["candleIndex"] == 1 for d in deltas)
+
+    def test_calibrate_no_snaps_for_aligned_analysis(self):
+        """When analysis already matches candles, /calibrate returns zero-count diagnostics."""
+        from starlette.testclient import TestClient
+        from ml.server import app
+
+        candles = [
+            {"datetime": f"2026-04-30 {i:02d}:00:00",
+             "open": 4580 + i, "high": 4595 + i, "low": 4580 + i, "close": 4590 + i}
+            for i in range(60)
+        ]
+        analysis = {
+            "bias": "bullish",
+            "orderBlocks": [
+                {"type": "bullish", "high": 4596, "low": 4581, "candleIndex": 1, "tf": "1H"},
+            ],
+            "fvgs": [],
+            "liquidity": [],
+            "entry": {"price": 4590.0, "direction": "long", "rationale": "test"},
+            "stopLoss": {"price": 4580.0, "rationale": "test"},
+            "takeProfits": [{"price": 4610.0, "rationale": "test", "rr": 2.0}],
+            "killzone": "London",
+            "confluences": ["test"],
+        }
+
+        with TestClient(app) as client:
+            r = client.post("/calibrate", json={"analysis": analysis, "candles": candles})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["snap_diagnostics"]["snapped_obs"] == 0
+        assert body["snap_diagnostics"]["dropped_obs"] == 0
