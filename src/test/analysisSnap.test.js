@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapAnalysisToCandles } from "../analysisSnap.js";
+import { snapAnalysisToCandles, groupLiquidityByLevel } from "../analysisSnap.js";
 
 const c = (h, l) => ({ datetime: "2026-04-30 12:00", open: l, high: h, low: l, close: h });
 
@@ -246,5 +246,96 @@ describe("snapAnalysisToCandles — liquidity", () => {
       type: "buyside", tf: "4H", swept: false, note: "key high",
       snapped: true, price: 112,
     });
+  });
+});
+
+describe("groupLiquidityByLevel", () => {
+  it("groups two BSLs at nearby prices with same tf into one group", () => {
+    const liq = [
+      { type: "buyside", price: 4630.30, candleIndex: 5, tf: "1H" },
+      { type: "buyside", price: 4630.50, candleIndex: 9, tf: "1H" },
+    ];
+    const groups = groupLiquidityByLevel(liq, 0.50);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].items).toHaveLength(2);
+  });
+
+  it("keeps two BSLs at same price but different tf as separate groups", () => {
+    const liq = [
+      { type: "buyside", price: 4630.30, candleIndex: 5, tf: "1H" },
+      { type: "buyside", price: 4630.30, candleIndex: 9, tf: "4H" },
+    ];
+    const groups = groupLiquidityByLevel(liq, 0.50);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("keeps BSL and SSL at same price as separate groups", () => {
+    const liq = [
+      { type: "buyside", price: 4630, candleIndex: 5, tf: "1H" },
+      { type: "sellside", price: 4630, candleIndex: 9, tf: "1H" },
+    ];
+    const groups = groupLiquidityByLevel(liq, 0.50);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("uses leftmost candleIndex as the group representative", () => {
+    const liq = [
+      { type: "buyside", price: 4630.30, candleIndex: 9, tf: "1H" },
+      { type: "buyside", price: 4630.50, candleIndex: 5, tf: "1H" },
+    ];
+    const groups = groupLiquidityByLevel(liq, 0.50);
+    expect(groups[0].items[0].candleIndex).toBe(5);
+  });
+
+  it("returns empty array on empty input", () => {
+    expect(groupLiquidityByLevel([], 0.50)).toEqual([]);
+  });
+
+  it("treats prices outside tolerance as separate groups", () => {
+    const liq = [
+      { type: "buyside", price: 4630.00, candleIndex: 5, tf: "1H" },
+      { type: "buyside", price: 4631.00, candleIndex: 9, tf: "1H" },
+    ];
+    const groups = groupLiquidityByLevel(liq, 0.50);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("groups bin-edge straddlers within tolerance (4630.49 and 4630.51)", () => {
+    // bucket-based grouping would split these (4630.49→4630.50 bucket, 4630.51→4631.00 bucket).
+    // Single-link clustering correctly groups them as 0.02 apart.
+    const liq = [
+      { type: "buyside", price: 4630.49, candleIndex: 5, tf: "1H" },
+      { type: "buyside", price: 4630.51, candleIndex: 9, tf: "1H" },
+    ];
+    const groups = groupLiquidityByLevel(liq, 0.50);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].items).toHaveLength(2);
+  });
+});
+
+describe("snapAnalysisToCandles — idempotency", () => {
+  it("is a no-op when analysis already matches candles (round-trip)", () => {
+    const candles = [c(100, 90), c(110, 95), c(120, 105), c(130, 115)];
+    const analysis = {
+      bias: "bullish",
+      orderBlocks: [{ type: "bullish", high: 110, low: 95, candleIndex: 1, tf: "1H" }],
+      fvgs: [{ type: "bullish", high: 105, low: 100, startIndex: 0, tf: "1H" }],
+      liquidity: [{ type: "buyside", price: 130, candleIndex: 3, tf: "1H" }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(diagnostics.snapped_obs).toBe(0);
+    expect(diagnostics.snapped_fvgs).toBe(0);
+    expect(diagnostics.snapped_liquidity).toBe(0);
+    expect(diagnostics.dropped_obs).toBe(0);
+    expect(diagnostics.dropped_fvgs).toBe(0);
+    expect(diagnostics.dropped_liquidity).toBe(0);
+    expect(out.orderBlocks[0].snapped).toBeUndefined();
+
+    // Second pass against snapped output should also be a no-op
+    const second = snapAnalysisToCandles(out, candles);
+    expect(second.diagnostics.snapped_obs).toBe(0);
+    expect(second.diagnostics.snapped_fvgs).toBe(0);
+    expect(second.diagnostics.snapped_liquidity).toBe(0);
+    expect(second.analysis).toEqual(out);
   });
 });

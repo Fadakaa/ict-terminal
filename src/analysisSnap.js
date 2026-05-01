@@ -119,3 +119,31 @@ export function snapAnalysisToCandles(analysis, candles, options = {}) {
     diagnostics: diag,
   };
 }
+
+export function groupLiquidityByLevel(liquidity, tolerance = DEFAULT_TOLERANCE) {
+  // Single-link clustering: sort by price, then merge an item into an existing
+  // group (same type+tf) when any item already in the group is within tolerance.
+  // This preserves the user's contract "items within $0.50 of each other collapse"
+  // — bucket-based binning would split items that straddle bucket boundaries.
+  const sorted = [...liquidity].sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
+  const groups = [];
+  for (const liq of sorted) {
+    const tf = liq.tf ?? "";
+    const price = liq.price ?? 0;
+    const matching = groups.find((g) =>
+      g.type === liq.type &&
+      g.tf === tf &&
+      g.items.some((other) => Math.abs((other.price ?? 0) - price) <= tolerance)
+    );
+    if (matching) {
+      matching.items.push(liq);
+    } else {
+      groups.push({ key: `${liq.type}|${price}|${tf}`, type: liq.type, tf, items: [liq] });
+    }
+  }
+  // Sort each group's items by ascending candleIndex so the leftmost is first
+  for (const g of groups) {
+    g.items.sort((a, b) => (a.candleIndex ?? 0) - (b.candleIndex ?? 0));
+  }
+  return groups;
+}
