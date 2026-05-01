@@ -248,6 +248,16 @@ function getCurrentKillzone() {
   return "Off-Session";
 }
 
+function formatAgo(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
 function buildEnhancedICTPrompt(candles1h, candles4h) {
   const slim = (arr) => (arr || []).map((c) => ({
     dt: c.datetime, o: +Number(c.open).toFixed(2), h: +Number(c.high).toFixed(2),
@@ -347,6 +357,8 @@ export default function App() {
   const [calibrationValue, setCalibrationValue] = useState(null);
   const [datasetStats, setDatasetStats] = useState(null);
   const [pipelineHealth, setPipelineHealth] = useState(null);
+  const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   // ── UI state ──
   const [screen, setScreen] = useState("setup");
@@ -512,6 +524,10 @@ export default function App() {
     results.forEach((r, i) => {
       endpoints[i][1](r.status === "fulfilled" ? r.value : null);
     });
+    const statusIdx = endpoints.findIndex(([url]) => url === "/api/ml/scanner/status");
+    if (statusIdx >= 0 && results[statusIdx]?.status === "fulfilled" && results[statusIdx].value) {
+      setLastSyncAt(Date.now());
+    }
   }, [timeframe]);
 
   // ═══════════════════════════════════════════════════════════
@@ -913,6 +929,12 @@ export default function App() {
     setScreen("live");
   };
 
+  // Tick `nowTick` every 5s so the "synced Xs ago" indicator re-renders.
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 5000);
+    return () => clearInterval(id);
+  }, []);
+
   // Live mode auto-refresh
   useEffect(() => {
     if (!liveMode || screen !== "live" || isDemo) return;
@@ -956,7 +978,7 @@ export default function App() {
       ]).then(([p, h, s, pnl, acc, calVal, mi, evalD, ds, cb, prosp, kzg, thesis, thAcc, lc, rctx]) => {
         if (p.status === "fulfilled" && p.value) setScannerSetups(p.value);
         if (h.status === "fulfilled" && h.value) setScannerHistory(h.value);
-        if (s.status === "fulfilled" && s.value) setScannerStatus(s.value);
+        if (s.status === "fulfilled" && s.value) { setScannerStatus(s.value); setLastSyncAt(Date.now()); }
         if (pnl.status === "fulfilled" && pnl.value) setPnlHistory(pnl.value);
         if (acc.status === "fulfilled" && acc.value) setAccuracy(acc.value);
         if (calVal.status === "fulfilled" && calVal.value) setCalibrationValue(calVal.value);
@@ -3156,9 +3178,15 @@ export default function App() {
         )}
 
         {/* Scanner status indicator */}
-        {scannerStatus?.scheduler_running && (
-          <div style={{ fontSize: 7, color: "#444466", textAlign: "center", marginBottom: 6 }}>
-            Scanner active · {scannerStatus.total_scans || 0} scans · Next: {scannerStatus.next_scan ? new Date(scannerStatus.next_scan).toLocaleTimeString() : "—"}
+        {(scannerStatus?.scheduler_running || pollHealth === "dead") && (
+          <div style={{
+            fontSize: 7, textAlign: "center", marginBottom: 6,
+            color: pollHealth === "dead" ? "#ef5350" : pollHealth === "stale" ? "#ffa726" : "#444466",
+            fontWeight: pollHealth === "dead" ? 700 : 400,
+          }}>
+            {pollHealth === "dead"
+              ? `⚠ BACKEND OFFLINE — last sync ${lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString() : "never"}`
+              : `Scanner active · ${scannerStatus?.total_scans || 0} scans · Next: ${scannerStatus?.next_scan ? new Date(scannerStatus.next_scan).toLocaleTimeString() : "—"}${lastSyncAt ? ` · synced ${formatAgo(syncAgeMs)} ago` : ""}`}
           </div>
         )}
 
@@ -3590,6 +3618,11 @@ export default function App() {
   const chg = last && prev ? ((last.close - prev.close) / prev.close) * 100 : 0;
   const grade = calibration?.confidence?.grade;
 
+  const syncAgeMs = lastSyncAt ? nowTick - lastSyncAt : null;
+  const pollHealth = syncAgeMs == null ? "unknown"
+    : syncAgeMs < 75_000 ? "ok"
+    : syncAgeMs < 180_000 ? "stale" : "dead";
+
   return (
     <div style={{ background: "#08080f", height: "100vh", color: "#cdd6f4", fontFamily: "'JetBrains Mono', monospace", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;900&display=swap');
@@ -3640,6 +3673,18 @@ export default function App() {
 
         {/* Right: Pipeline dots + Grade */}
         <div style={{ marginLeft: 20, display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Sync health — always visible across tabs */}
+          {(lastSyncAt || pollHealth === "dead") && (
+            <span style={{
+              fontSize: 6.5, letterSpacing: 0.3,
+              color: pollHealth === "dead" ? "#ef5350" : pollHealth === "stale" ? "#ffa726" : "#444466",
+              fontWeight: pollHealth === "dead" ? 700 : 400,
+            }}>
+              {pollHealth === "dead"
+                ? `⚠ OFFLINE${lastSyncAt ? " " + new Date(lastSyncAt).toLocaleTimeString() : ""}`
+                : `synced ${formatAgo(syncAgeMs)} ago`}
+            </span>
+          )}
           {/* Pipeline dots */}
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             {[
@@ -3647,12 +3692,17 @@ export default function App() {
               { label: "Cal", ok: !!calibration, warn: pipelineHealth?.status === "ok" && !calibration },
               { label: `Bayes ${bayesian?.total_trades || 0}`, ok: !!bayesian },
               { label: "AG", ok: false, warn: !!sessionStats?.seeded },
-              { label: "Scan", ok: scannerStatus?.scheduler_running, warn: scannerStatus && !scannerStatus.scheduler_running },
+              {
+                label: "Scan",
+                ok: scannerStatus?.scheduler_running && pollHealth !== "dead",
+                warn: pollHealth === "stale" || (scannerStatus && !scannerStatus.scheduler_running && pollHealth !== "dead"),
+                error: pollHealth === "dead",
+              },
             ].map((dot) => (
               <div key={dot.label} style={{ display: "flex", alignItems: "center", gap: 3 }}>
                 <div style={{
                   width: 6, height: 6, borderRadius: "50%",
-                  background: dot.ok ? "#26a69a" : dot.warn ? "#f5c842" : "#33334d",
+                  background: dot.error ? "#ef5350" : dot.ok ? "#26a69a" : dot.warn ? "#f5c842" : "#33334d",
                 }} />
                 <span style={{ fontSize: 6.5, color: "#444466" }}>{dot.label}</span>
               </div>
