@@ -5,17 +5,32 @@ function makeDiagnostics() {
     snapped_obs: 0, dropped_obs: 0,
     snapped_fvgs: 0, dropped_fvgs: 0,
     snapped_liquidity: 0, dropped_liquidity: 0,
+    unresolved_anchor: 0,
     deltas: [],
   };
 }
 
+function resolveAnchorIndex(item, candles, legacyKey) {
+  // New schema: anchor_dt — find candle by datetime equality
+  if (item.anchor_dt) {
+    const idx = candles.findIndex((c) => c.datetime === item.anchor_dt);
+    return idx; // -1 if not found
+  }
+  // Legacy: numeric index field (candleIndex or startIndex)
+  const legacy = item[legacyKey];
+  if (typeof legacy === "number" && legacy >= 0 && legacy < candles.length) {
+    return legacy;
+  }
+  return -1;
+}
+
 function snapOrderBlocks(obs, candles, tolerance, diag) {
   const out = [];
-  const n = candles.length;
   for (const ob of obs) {
-    const ci = ob.candleIndex;
-    if (ci === undefined || ci === null || ci < 0 || ci >= n) {
+    const ci = resolveAnchorIndex(ob, candles, "candleIndex");
+    if (ci < 0) {
       diag.dropped_obs += 1;
+      if (ob.anchor_dt) diag.unresolved_anchor += 1;
       continue;
     }
     const c = candles[ci];
@@ -24,13 +39,13 @@ function snapOrderBlocks(obs, candles, tolerance, diag) {
     if (highOff > tolerance || lowOff > tolerance) {
       diag.snapped_obs += 1;
       diag.deltas.push({
-        kind: "ob", candleIndex: ci,
+        kind: "ob", candleIndex: ci, anchor_dt: ob.anchor_dt,
         claimed: { high: ob.high, low: ob.low },
         snapped: { high: c.high, low: c.low },
       });
-      out.push({ ...ob, high: c.high, low: c.low, snapped: true });
+      out.push({ ...ob, high: c.high, low: c.low, candleIndex: ci, snapped: true });
     } else {
-      out.push(ob);
+      out.push({ ...ob, candleIndex: ci });
     }
   }
   return out;
@@ -40,9 +55,10 @@ function snapFvgs(fvgs, candles, tolerance, diag) {
   const out = [];
   const n = candles.length;
   for (const fvg of fvgs) {
-    const si = fvg.startIndex;
-    if (si === undefined || si === null || si < 0 || si + 2 >= n) {
+    const si = resolveAnchorIndex(fvg, candles, "startIndex");
+    if (si < 0 || si + 2 >= n) {
       diag.dropped_fvgs += 1;
+      if (si < 0 && fvg.anchor_dt) diag.unresolved_anchor += 1;
       continue;
     }
     const c0 = candles[si];
@@ -64,13 +80,13 @@ function snapFvgs(fvgs, candles, tolerance, diag) {
     if (highOff > tolerance || lowOff > tolerance) {
       diag.snapped_fvgs += 1;
       diag.deltas.push({
-        kind: "fvg", startIndex: si,
+        kind: "fvg", startIndex: si, anchor_dt: fvg.anchor_dt,
         claimed: { high: fvg.high, low: fvg.low },
         snapped: { high: expectedHigh, low: expectedLow },
       });
-      out.push({ ...fvg, high: expectedHigh, low: expectedLow, snapped: true });
+      out.push({ ...fvg, high: expectedHigh, low: expectedLow, startIndex: si, snapped: true });
     } else {
-      out.push(fvg);
+      out.push({ ...fvg, startIndex: si });
     }
   }
   return out;
@@ -78,11 +94,11 @@ function snapFvgs(fvgs, candles, tolerance, diag) {
 
 function snapLiquidity(liqs, candles, tolerance, diag) {
   const out = [];
-  const n = candles.length;
   for (const liq of liqs) {
-    const ci = liq.candleIndex;
-    if (ci === undefined || ci === null || ci < 0 || ci >= n) {
+    const ci = resolveAnchorIndex(liq, candles, "candleIndex");
+    if (ci < 0) {
       diag.dropped_liquidity += 1;
+      if (liq.anchor_dt) diag.unresolved_anchor += 1;
       continue;
     }
     const c = candles[ci];
@@ -91,13 +107,13 @@ function snapLiquidity(liqs, candles, tolerance, diag) {
     if (off > tolerance) {
       diag.snapped_liquidity += 1;
       diag.deltas.push({
-        kind: "liquidity", candleIndex: ci,
+        kind: "liquidity", candleIndex: ci, anchor_dt: liq.anchor_dt,
         claimed: { price: liq.price },
         snapped: { price: expected },
       });
-      out.push({ ...liq, price: expected, snapped: true });
+      out.push({ ...liq, price: expected, candleIndex: ci, snapped: true });
     } else {
-      out.push(liq);
+      out.push({ ...liq, candleIndex: ci });
     }
   }
   return out;
