@@ -164,7 +164,7 @@ groups.forEach((group) => {
 });
 ```
 
-`groupLiquidityByLevel` is a small pure helper exported from [src/lib/analysisSnap.js](../../../src/lib/analysisSnap.js). Items are grouped by `(type, round(price / 0.50) * 0.50, tf)`. Within a group, `candleIndex` is taken from the leftmost item so the line still anchors at the earliest candle.
+`groupLiquidityByLevel` is a small pure helper exported from [src/analysisSnap.js](../../../src/analysisSnap.js). Items are grouped by `(type, round(price / 0.50) * 0.50, tf)`. Within a group, `candleIndex` is taken from the leftmost item so the line still anchors at the earliest candle.
 
 The line is drawn once per group (not once per item) so we don't paint the same line twice; only the label gets the `×N` suffix.
 
@@ -180,11 +180,11 @@ This is purely belt-and-suspenders. The snap is the load-bearing fix; the prompt
 
 ### New files
 
-- **[src/lib/analysisSnap.js](../../../src/lib/analysisSnap.js)** — pure-function module. Exports:
+- **[src/analysisSnap.js](../../../src/analysisSnap.js)** — pure-function module. Exports:
   - `snapAnalysisToCandles(analysis, candles, options?)` returning `{ analysis: snappedAnalysis, diagnostics }`. Default `options.tolerance = 0.50`.
   - `groupLiquidityByLevel(liquidity, tolerance)` returning `[{ items: [...] }, ...]`.
   - No JSX, no imports of React or D3 — keeps it trivially unit-testable in vitest.
-- **[src/lib/__tests__/analysisSnap.test.js](../../../src/lib/__tests__/analysisSnap.test.js)** — vitest tests (cases listed below).
+- **[src/test/analysisSnap.test.js](../../../src/test/analysisSnap.test.js)** — vitest tests (cases listed below).
 - **[ml/analysis_snap.py](../../../ml/analysis_snap.py)** — pure Python module. Exports:
   - `snap_analysis_to_candles(analysis: dict, candles: list[dict], tolerance: float = 0.50) -> tuple[dict, dict]` returning `(snapped_analysis, diagnostics)`.
   - No I/O, no DB, no logging — pure compute. Calling code logs.
@@ -193,7 +193,7 @@ This is purely belt-and-suspenders. The snap is the load-bearing fix; the prompt
 ### Modified files
 
 - **[src/App.jsx](../../../src/App.jsx)**:
-  - Top of file: add `import { snapAnalysisToCandles, groupLiquidityByLevel } from "./lib/analysisSnap";`.
+  - Top of file: add `import { snapAnalysisToCandles, groupLiquidityByLevel } from "./analysisSnap.js";`.
   - Inline prompt builder `buildEnhancedICTPrompt` (~line 250): add the Approach-A framework item before the `Return ONLY valid JSON:` line.
   - `runAnalysis` (~line 638-640): wrap the parsed JSON through `snapAnalysisToCandles` before caching and `setAnalysis`. Conditional `console.warn` on diagnostics.
   - Liquidity render loop (~line 1089): replace `forEach` with the grouped iteration.
@@ -204,7 +204,7 @@ This is purely belt-and-suspenders. The snap is the load-bearing fix; the prompt
 
 ### Frontend (vitest)
 
-`src/lib/__tests__/analysisSnap.test.js`:
+`src/test/analysisSnap.test.js`:
 
 - `snapAnalysisToCandles` — OB cases:
   - both high/low diverge by >$0.50 → snap to candle wick, `ob.snapped === true`, `diagnostics.snapped_obs === 1`
