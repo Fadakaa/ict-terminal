@@ -226,3 +226,56 @@ class TestCalibrateEndpointIntegration:
         body = r.json()
         assert body["snap_diagnostics"]["snapped_obs"] == 0
         assert body["snap_diagnostics"]["dropped_obs"] == 0
+
+
+class TestScannerSnapIntegration:
+    """Verify Scanner._analyze_and_store snaps Claude's analysis before storing/calibrating."""
+
+    def test_snap_helper_called_with_trimmed_candles_frame(self):
+        """Direct unit test on the snap call site logic.
+
+        We don't spin up the full Scanner (heavy: DB, scheduler, OANDA fetcher).
+        Instead, we verify the snap-helper contract that scanner.py relies on:
+        passing the trimmed candle view (the same one sent to Claude) to the snap
+        helper produces the right snap target.
+        """
+        from ml.analysis_snap import snap_analysis_to_candles
+
+        # Trimmed view (60 candles) — the slice Claude was given
+        trimmed = [
+            {"datetime": f"2026-04-30 {i:02d}:00:00",
+             "open": 4580 + i,
+             "high": 4598.5 if i == 1 else 4595 + i,
+             "low": 4584.0 if i == 1 else 4580 + i,
+             "close": 4590 + i}
+            for i in range(60)
+        ]
+        # Claude returns OB at candleIndex=1 with diverged values
+        analysis = {
+            "orderBlocks": [
+                {"type": "bullish", "high": 4540.0, "low": 4520.0, "candleIndex": 1, "tf": "1H"},
+            ],
+            "fvgs": [], "liquidity": [],
+        }
+
+        snapped, diag = snap_analysis_to_candles(analysis, trimmed)
+
+        # OB high/low replaced with the actual wick of trimmed[1]
+        assert snapped["orderBlocks"][0]["high"] == 4598.5
+        assert snapped["orderBlocks"][0]["low"] == 4584.0
+        assert snapped["orderBlocks"][0]["snapped"] is True
+        assert diag["snapped_obs"] == 1
+
+    def test_scanner_snap_hook_present(self):
+        """Smoke test: the scanner module imports snap_analysis_to_candles and uses
+        it in _analyze_and_store. Catches regressions where someone removes the
+        snap call."""
+        import inspect
+        from ml import scanner
+
+        source = inspect.getsource(scanner.ScannerEngine._analyze_and_store)
+        assert "snap_analysis_to_candles" in source, (
+            "ScannerEngine._analyze_and_store must call snap_analysis_to_candles. "
+            "If you renamed/moved the snap, update this test.")
+        assert "snap_diagnostics" in source, (
+            "ScannerEngine._analyze_and_store should bind snap_diagnostics for logging")

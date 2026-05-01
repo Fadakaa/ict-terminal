@@ -142,7 +142,7 @@ result["snap_diagnostics"] = snap_diagnostics
 return result
 ```
 
-In the live UI flow the analysis is already snapped client-side, so the backend snap is a no-op for that path. **Note:** the scanner pipeline (`Scanner._calibrate` in `ml/scanner.py`) calls `MLCalibrator.calibrate_trade` directly in-process — it does NOT go through the HTTP `/calibrate` endpoint. As a result, the backend snap added here only protects the live UI flow's calibration call. Snapping the scanner path is a separate task; tracked in the open issues section below.
+In the live UI flow the analysis is already snapped client-side, so the `/calibrate` snap is a no-op for that path. The scanner pipeline (`Scanner._analyze_and_store` in `ml/scanner.py`) now snaps the analysis returned by `_call_claude` directly, before either the in-process `MLCalibrator.calibrate_trade` call or the `store_setup` persistence. So scanner-stored `scanner_setups.analysis_json` rows get snapped values for all new setups.
 
 ### Liquidity dedup
 
@@ -258,6 +258,6 @@ After implementation:
 
 ## Open issues / future work
 
-- **Backend snap does NOT cover the scanner path.** `Scanner._calibrate` invokes `MLCalibrator.calibrate_trade` directly via in-process import, bypassing the HTTP `/calibrate` endpoint. The backend snap added in this PR only protects the live UI's calibration call. Adding `snap_analysis_to_candles` directly inside `Scanner._calibrate` (or at the analysis-storage boundary) is a follow-up task; until then, scanner-stored `scanner_setups.analysis_json` rows continue to contain unsnapped values.
+- **Scanner-path snap shipped in follow-up commit.** `Scanner._analyze_and_store` now snaps the analysis returned by `_call_claude` against the trimmed candles (the same view sent to Claude) before either `_calibrate` or `store_setup` runs. Both the in-process calibration call and the persisted `scanner_setups.analysis_json` benefit. The synthetic prospect path (`_finalize_prospect`) constructs analysis without OB/FVG/liquidity items, so snap there is a no-op and was not added.
 - **Cross-collision label cleanup.** The user reported `BSL 1H` colliding visually with `4H DR HIGH` labels at the right edge. That's a separate render loop (dealing range markers at [src/App.jsx:1106-1114](../../../src/App.jsx)) and a separate fix — punted for a future task.
 - **Visual snap indicator.** We deliberately do not add a chart-side badge today. If users start asking "did Claude get this anchor right?" we can revisit and use the per-item `snapped: true` flag we're already setting.

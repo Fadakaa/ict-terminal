@@ -831,6 +831,17 @@ class ScannerEngine:
                     self._last_error = f"Claude returned no result for {timeframe}"
                 return {"status": "no_result"}
 
+            # Snap any divergent OB/FVG/liquidity values onto actual candle wicks
+            # before downstream calibration + persistence. Snap operates against
+            # `candles` (the trimmed view sent to Claude), matching his candleIndex frame.
+            from ml.analysis_snap import snap_analysis_to_candles
+            analysis, snap_diagnostics = snap_analysis_to_candles(analysis, candles)
+            if any(snap_diagnostics[k] for k in (
+                    "snapped_obs", "snapped_fvgs", "snapped_liquidity",
+                    "dropped_obs", "dropped_fvgs", "dropped_liquidity")):
+                logger.warning("Scanner [%s]: overlay snap diagnostics: %s",
+                               timeframe, snap_diagnostics)
+
             # ── Save narrative state (even if no setup found) ──
             saved_ns_id = None
             is_revision = False
