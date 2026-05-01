@@ -784,6 +784,7 @@ async def calibrate_endpoint(request: dict):
         "candles_4h": [ ... ]   // optional 4H candles
     }
     """
+    from ml.analysis_snap import snap_analysis_to_candles
     from ml.claude_bridge import ClaudeAnalysisBridge
     from ml.calibrate import MLCalibrator
 
@@ -795,11 +796,18 @@ async def calibrate_endpoint(request: dict):
     if not candles:
         raise HTTPException(status_code=400, detail="Missing 'candles' field")
 
+    analysis, snap_diagnostics = snap_analysis_to_candles(analysis, candles)
+    if (snap_diagnostics["snapped_obs"] or snap_diagnostics["snapped_fvgs"]
+            or snap_diagnostics["snapped_liquidity"] or snap_diagnostics["dropped_obs"]
+            or snap_diagnostics["dropped_fvgs"] or snap_diagnostics["dropped_liquidity"]):
+        logger.warning("overlay snap diagnostics: %s", snap_diagnostics)
+
     bridge = ClaudeAnalysisBridge()
     parsed = bridge.parse_analysis(analysis, candles)
 
     calibrator = MLCalibrator()
     result = calibrator.calibrate_trade(parsed, candles)
+    result["snap_diagnostics"] = snap_diagnostics
 
     return result
 

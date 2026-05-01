@@ -13,6 +13,7 @@ import {
 } from "./market.js";
 import { useChartScale } from "./useChartScale.js";
 import { scaleYDomain, scaleXRange, panXRange, wheelZoom } from "./chartScaling.js";
+import { snapAnalysisToCandles, groupLiquidityByLevel } from "./analysisSnap.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -283,6 +284,7 @@ ANALYSIS FRAMEWORK:
 7. CRITICAL: Only suggest entry if there is a pullback or rejection into the zone. Do NOT enter on displacement candles.
 8. If there is no high-probability setup right now, say so honestly. Set entry to null.
 9. For every OB, FVG, and liquidity level you return, set "tf" to the timeframe where you identified it ("1H" or "4H"). Use 1H-relative candleIndex/startIndex even for 4H zones — find the 1H candle that aligns with the 4H zone's anchor time. Include 4H zones if they are within or near the visible 1H window and relevant to the setup.
+10. CRITICAL CONSISTENCY: Numeric fields you return MUST match the actual candle data, not paraphrased values from your prose. For each "orderBlocks[i]": "high" and "low" MUST equal the actual high and low of the candle at "candleIndex". For each "fvgs[i]": bullish → "low" = candle[startIndex].high, "high" = candle[startIndex+2].low; bearish → "high" = candle[startIndex].low, "low" = candle[startIndex+2].high. For each "liquidity[i]": "price" MUST equal candle[candleIndex].high (buyside) or candle[candleIndex].low (sellside). Do not round, paraphrase, or use values from a non-anchor candle. Mismatches will be silently corrected, but they signal you got the anchor candle wrong.
 
 Return ONLY valid JSON:
 {
@@ -635,7 +637,17 @@ export default function App() {
       const jsonStart = clean.indexOf("{");
       const jsonEnd = clean.lastIndexOf("}");
       if (jsonStart >= 0 && jsonEnd > jsonStart) clean = clean.slice(jsonStart, jsonEnd + 1);
-      const parsed = JSON.parse(clean);
+      const raw = JSON.parse(clean);
+      // Claude was given only the last 60 candles in the prompt (see buildEnhancedICTPrompt),
+      // so his candleIndex/startIndex values are slim-frame (0-59). Snap against the same view.
+      const slimForSnap = cds.length > 60 ? cds.slice(-60) : cds;
+      const { analysis: parsed, diagnostics } = snapAnalysisToCandles(raw, slimForSnap);
+      if (
+        diagnostics.snapped_obs || diagnostics.snapped_fvgs || diagnostics.snapped_liquidity ||
+        diagnostics.dropped_obs || diagnostics.dropped_fvgs || diagnostics.dropped_liquidity
+      ) {
+        console.warn("[analysis] overlay snap diagnostics:", diagnostics);
+      }
       analysisCacheRef.current = { hash, result: parsed };
       setAnalysis(parsed);
 
@@ -1034,9 +1046,13 @@ export default function App() {
 
     // ── ICT overlays ──
     if (analysis) {
+      // Claude returns candleIndex/startIndex in slim-frame (last 60 candles only).
+      // Translate to full-array frame so x() lookups land on the right candle.
+      const sliceOffset = Math.max(0, candles.length - 60);
+
       // Order Blocks — mechanical (solid border) vs Claude (dashed, dimmer)
       analysis.orderBlocks?.forEach((ob) => {
-        const ci = Math.max(0, Math.min(ob.candleIndex ?? ob.index ?? 0, candles.length - 1));
+        const ci = Math.max(0, Math.min((ob.candleIndex ?? ob.index ?? 0) + sliceOffset, candles.length - 1));
         const ox = x(ci) ?? 0;
         const ow = Math.max(0, w - ox);
         const bCol = ob.type === "bullish" ? "#26a69a" : "#ef5350";
@@ -1063,7 +1079,7 @@ export default function App() {
       // FVGs — mechanical (solid border) vs Claude (dashed, dimmer)
       // Filled FVGs rendered dimmer; open FVGs rendered brighter
       analysis.fvgs?.forEach((fvg) => {
-        const si = Math.max(0, Math.min(fvg.startIndex ?? fvg.index ?? 0, candles.length - 1));
+        const si = Math.max(0, Math.min((fvg.startIndex ?? fvg.index ?? 0) + sliceOffset, candles.length - 1));
         const fx = x(si) ?? 0;
         const fw = Math.max(0, w - fx);
         const isFilled = fvg.filled === true || fvg.fill_percentage >= 100;
@@ -1085,17 +1101,21 @@ export default function App() {
           .attr("opacity", isFilled ? 0.4 : (isMech ? 1 : 0.7)).text(label);
       });
 
-      // Liquidity levels — anchored at formation candle, project forward
-      analysis.liquidity?.forEach((liq) => {
+      // Liquidity levels — grouped by (type, price-bucket, tf) so duplicate labels collapse to ×N
+      const liqGroups = groupLiquidityByLevel(analysis.liquidity || [], 0.50);
+      liqGroups.forEach((group) => {
+        const liq = group.items[0]; // representative — leftmost candleIndex after group sort
+        const count = group.items.length;
         const lCol = liq.type === "buyside" ? "#f5c842" : "#ff6b6b";
-        const lci = Math.max(0, Math.min(liq.candleIndex ?? 0, candles.length - 1));
+        const lci = Math.max(0, Math.min((liq.candleIndex ?? 0) + sliceOffset, candles.length - 1));
         const lx = x(lci) ?? 0;
         g.append("line").attr("x1", lx).attr("x2", w).attr("y1", y(liq.price)).attr("y2", y(liq.price))
           .attr("stroke", lCol).attr("stroke-width", 1).attr("stroke-dasharray", "7,4").attr("opacity", 0.8);
         const liqTfTag = liq.tf ? ` ${liq.tf}` : "";
+        const countTag = count > 1 ? ` ×${count}` : "";
         g.append("text").attr("x", w + 3).attr("y", y(liq.price) + 4)
           .attr("fill", lCol).attr("font-size", "8px").attr("font-family", "monospace")
-          .text(`${liq.type === "buyside" ? "BSL" : "SSL"}${liqTfTag}`);
+          .text(`${liq.type === "buyside" ? "BSL" : "SSL"}${liqTfTag}${countTag}`);
       });
 
       // ── 4H Dealing Range markers ──
