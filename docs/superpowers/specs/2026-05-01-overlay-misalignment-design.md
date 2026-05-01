@@ -142,7 +142,7 @@ result["snap_diagnostics"] = snap_diagnostics
 return result
 ```
 
-In the live UI flow the analysis is already snapped client-side, so the backend snap is a no-op. The backend snap matters for the scanner path: `scanner.py` calls `/calibrate` independently for every detected setup, and those analyses are not snapped client-side. Snapping there means `claude_bridge.parse_analysis` and `MLCalibrator.calibrate_trade` see corrected `ob.high`/`ob.low` values, and the snapped analysis is what gets persisted to `scanner_setups.analysis_json`.
+In the live UI flow the analysis is already snapped client-side, so the backend snap is a no-op for that path. **Note:** the scanner pipeline (`Scanner._calibrate` in `ml/scanner.py`) calls `MLCalibrator.calibrate_trade` directly in-process — it does NOT go through the HTTP `/calibrate` endpoint. As a result, the backend snap added here only protects the live UI flow's calibration call. Snapping the scanner path is a separate task; tracked in the open issues section below.
 
 ### Liquidity dedup
 
@@ -258,6 +258,6 @@ After implementation:
 
 ## Open issues / future work
 
-- **Backend snap also runs on the scanner path.** The scanner currently calls `/calibrate` for every detected setup. After this fix lands, scanner-stored `scanner_setups.analysis_json` will have snapped values for all *new* setups. Rows stored before this PR are unchanged; if a future analysis ever consumes them and depends on aligned overlays, a one-shot backfill script (analogous to `ml/backfill_features.py`) would re-snap historic rows. Not in scope here.
+- **Backend snap does NOT cover the scanner path.** `Scanner._calibrate` invokes `MLCalibrator.calibrate_trade` directly via in-process import, bypassing the HTTP `/calibrate` endpoint. The backend snap added in this PR only protects the live UI's calibration call. Adding `snap_analysis_to_candles` directly inside `Scanner._calibrate` (or at the analysis-storage boundary) is a follow-up task; until then, scanner-stored `scanner_setups.analysis_json` rows continue to contain unsnapped values.
 - **Cross-collision label cleanup.** The user reported `BSL 1H` colliding visually with `4H DR HIGH` labels at the right edge. That's a separate render loop (dealing range markers at [src/App.jsx:1106-1114](../../../src/App.jsx)) and a separate fix — punted for a future task.
 - **Visual snap indicator.** We deliberately do not add a chart-side badge today. If users start asking "did Claude get this anchor right?" we can revisit and use the per-item `snapped: true` flag we're already setting.

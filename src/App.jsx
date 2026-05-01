@@ -638,7 +638,10 @@ export default function App() {
       const jsonEnd = clean.lastIndexOf("}");
       if (jsonStart >= 0 && jsonEnd > jsonStart) clean = clean.slice(jsonStart, jsonEnd + 1);
       const raw = JSON.parse(clean);
-      const { analysis: parsed, diagnostics } = snapAnalysisToCandles(raw, cds);
+      // Claude was given only the last 60 candles in the prompt (see buildEnhancedICTPrompt),
+      // so his candleIndex/startIndex values are slim-frame (0-59). Snap against the same view.
+      const slimForSnap = cds.length > 60 ? cds.slice(-60) : cds;
+      const { analysis: parsed, diagnostics } = snapAnalysisToCandles(raw, slimForSnap);
       if (
         diagnostics.snapped_obs || diagnostics.snapped_fvgs || diagnostics.snapped_liquidity ||
         diagnostics.dropped_obs || diagnostics.dropped_fvgs || diagnostics.dropped_liquidity
@@ -1043,9 +1046,13 @@ export default function App() {
 
     // ── ICT overlays ──
     if (analysis) {
+      // Claude returns candleIndex/startIndex in slim-frame (last 60 candles only).
+      // Translate to full-array frame so x() lookups land on the right candle.
+      const sliceOffset = Math.max(0, candles.length - 60);
+
       // Order Blocks — mechanical (solid border) vs Claude (dashed, dimmer)
       analysis.orderBlocks?.forEach((ob) => {
-        const ci = Math.max(0, Math.min(ob.candleIndex ?? ob.index ?? 0, candles.length - 1));
+        const ci = Math.max(0, Math.min((ob.candleIndex ?? ob.index ?? 0) + sliceOffset, candles.length - 1));
         const ox = x(ci) ?? 0;
         const ow = Math.max(0, w - ox);
         const bCol = ob.type === "bullish" ? "#26a69a" : "#ef5350";
@@ -1072,7 +1079,7 @@ export default function App() {
       // FVGs — mechanical (solid border) vs Claude (dashed, dimmer)
       // Filled FVGs rendered dimmer; open FVGs rendered brighter
       analysis.fvgs?.forEach((fvg) => {
-        const si = Math.max(0, Math.min(fvg.startIndex ?? fvg.index ?? 0, candles.length - 1));
+        const si = Math.max(0, Math.min((fvg.startIndex ?? fvg.index ?? 0) + sliceOffset, candles.length - 1));
         const fx = x(si) ?? 0;
         const fw = Math.max(0, w - fx);
         const isFilled = fvg.filled === true || fvg.fill_percentage >= 100;
@@ -1100,7 +1107,7 @@ export default function App() {
         const liq = group.items[0]; // representative — leftmost candleIndex after group sort
         const count = group.items.length;
         const lCol = liq.type === "buyside" ? "#f5c842" : "#ff6b6b";
-        const lci = Math.max(0, Math.min(liq.candleIndex ?? 0, candles.length - 1));
+        const lci = Math.max(0, Math.min((liq.candleIndex ?? 0) + sliceOffset, candles.length - 1));
         const lx = x(lci) ?? 0;
         g.append("line").attr("x1", lx).attr("x2", w).attr("y1", y(liq.price)).attr("y2", y(liq.price))
           .attr("stroke", lCol).attr("stroke-width", 1).attr("stroke-dasharray", "7,4").attr("opacity", 0.8);
