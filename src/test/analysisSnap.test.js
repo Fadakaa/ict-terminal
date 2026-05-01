@@ -186,3 +186,65 @@ describe("snapAnalysisToCandles — fvgs", () => {
     });
   });
 });
+
+describe("snapAnalysisToCandles — liquidity", () => {
+  it("snaps buyside price to candle.high when out of tolerance", () => {
+    const candles = [c(100, 90), c(112.5, 100)];
+    const analysis = {
+      liquidity: [{ type: "buyside", price: 105, candleIndex: 1 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.liquidity[0].price).toBe(112.5);
+    expect(out.liquidity[0].snapped).toBe(true);
+    expect(diagnostics.snapped_liquidity).toBe(1);
+  });
+
+  it("snaps sellside price to candle.low when out of tolerance", () => {
+    const candles = [c(100, 90), c(110, 88.7)];
+    const analysis = {
+      liquidity: [{ type: "sellside", price: 95, candleIndex: 1 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.liquidity[0].price).toBe(88.7);
+    expect(diagnostics.snapped_liquidity).toBe(1);
+  });
+
+  it("leaves liquidity unchanged when within tolerance", () => {
+    const candles = [c(100.3, 90), c(110, 95)];
+    const analysis = {
+      liquidity: [{ type: "buyside", price: 100, candleIndex: 0 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.liquidity[0].snapped).toBeUndefined();
+    expect(diagnostics.snapped_liquidity).toBe(0);
+  });
+
+  it("drops liquidity with missing/negative/OOB candleIndex", () => {
+    const candles = [c(100, 90)];
+    const analysis = {
+      liquidity: [
+        { type: "buyside", price: 100 },
+        { type: "sellside", price: 90, candleIndex: -1 },
+        { type: "buyside", price: 100, candleIndex: 99 },
+      ],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.liquidity).toHaveLength(0);
+    expect(diagnostics.dropped_liquidity).toBe(3);
+  });
+
+  it("preserves swept, tf, note on snap", () => {
+    const candles = [c(112, 90)];
+    const analysis = {
+      liquidity: [{
+        type: "buyside", price: 100, candleIndex: 0,
+        tf: "4H", swept: false, note: "key high",
+      }],
+    };
+    const { analysis: out } = snapAnalysisToCandles(analysis, candles);
+    expect(out.liquidity[0]).toMatchObject({
+      type: "buyside", tf: "4H", swept: false, note: "key high",
+      snapped: true, price: 112,
+    });
+  });
+});

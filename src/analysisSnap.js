@@ -76,16 +76,45 @@ function snapFvgs(fvgs, candles, tolerance, diag) {
   return out;
 }
 
+function snapLiquidity(liqs, candles, tolerance, diag) {
+  const out = [];
+  const n = candles.length;
+  for (const liq of liqs) {
+    const ci = liq.candleIndex;
+    if (ci === undefined || ci === null || ci < 0 || ci >= n) {
+      diag.dropped_liquidity += 1;
+      continue;
+    }
+    const c = candles[ci];
+    const expected = liq.type === "buyside" ? c.high : c.low;
+    const off = Math.abs((liq.price ?? 0) - expected);
+    if (off > tolerance) {
+      diag.snapped_liquidity += 1;
+      diag.deltas.push({
+        kind: "liquidity", candleIndex: ci,
+        claimed: { price: liq.price },
+        snapped: { price: expected },
+      });
+      out.push({ ...liq, price: expected, snapped: true });
+    } else {
+      out.push(liq);
+    }
+  }
+  return out;
+}
+
 export function snapAnalysisToCandles(analysis, candles, options = {}) {
   const tolerance = options.tolerance ?? DEFAULT_TOLERANCE;
   const diag = makeDiagnostics();
   const obs = analysis.orderBlocks ?? [];
   const fvgs = analysis.fvgs ?? [];
+  const liqs = analysis.liquidity ?? [];
   return {
     analysis: {
       ...analysis,
       orderBlocks: snapOrderBlocks(obs, candles, tolerance, diag),
       fvgs: snapFvgs(fvgs, candles, tolerance, diag),
+      liquidity: snapLiquidity(liqs, candles, tolerance, diag),
     },
     diagnostics: diag,
   };
