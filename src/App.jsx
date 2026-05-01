@@ -295,6 +295,10 @@ ANALYSIS FRAMEWORK:
         Sequence: ...red red [GREEN candle, c=4630, o=4625] [RED displacement, 4630→4610]...
         The GREEN candle is the BEARISH OB. type="bearish", anchor_dt=green candle's dt.
       If you find yourself anchoring a "bullish OB" to a green/up-closed candle, you have it wrong — re-pick. The system will silently DROP wrong-color OBs.
+      MUST BE THE *IMMEDIATE LAST* OPPOSING-COLOR CANDLE — no skipping over more recent ones:
+        For a bullish OB, the anchor MUST be the very LAST red candle before the upward displacement leg. If there is ANY red/down-closed candle between your chosen anchor and the start of the displacement, you have picked too far back — pick the more recent one. "Most recent red candle, then displacement" is the only valid arrangement.
+        Same for bearish OB: the anchor MUST be the very LAST green candle before the downward displacement leg. No green candles allowed between your anchor and the displacement start.
+        Self-check: look at the candle right after your anchor. It MUST be either the displacement candle itself, or part of the displacement leg (continuing in the displacement direction). If the candle right after your anchor is another opposing-color candle, you picked the wrong anchor.
     For each "fvgs[i].anchor_dt":
       - Set anchor_dt to the dt of the FIRST candle of the 3-candle FVG pattern (the candle BEFORE the displacement). The 3 candles are: anchor (first), anchor+1 (the displacement, middle), anchor+2 (after).
       - Bullish FVG geometry: candle[anchor].high < candle[anchor+2].low (a real upward gap exists).
