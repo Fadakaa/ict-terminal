@@ -188,8 +188,15 @@ EXECUTION CANDLES ({len(h1_slim)} candles):
 11. For every OB, FVG, and liquidity level you return, set "tf" to the timeframe where you identified it (e.g. "1H" or "4H" — match the labels of the candle blocks above). HTF zones generally carry more weight than LTF zones; flag them so the system can weight them accordingly. Use a execution-timeframe candle's dt for anchor_dt even for HTF zones — find the execution candle that aligns with the HTF zone's anchor time.
 12. ANCHOR CANDLE RULES (use these exact rules — do not improvise):
     For each "orderBlocks[i].anchor_dt":
-      - Bullish OB → the dt of the LAST bearish (close < open) candle BEFORE the bullish displacement leg. NOT the displacement candle itself.
-      - Bearish OB → the dt of the LAST bullish (close > open) candle BEFORE the bearish displacement leg. NOT the displacement candle itself.
+      WARNING — DO NOT BE MISLED BY THE NAME. "Bullish OB" does NOT mean a green/up-closed candle. It means an OB that PRODUCES bullish moves. Per ICT, this is a DOWN-CLOSED (close < open, RED) candle that gets broken by upward displacement. "Bearish OB" similarly is a GREEN/up-closed candle that gets broken by downward displacement.
+      - Bullish OB → the dt of the LAST DOWN-CLOSED (close < open, RED) candle BEFORE the bullish displacement leg. The candle's close MUST be less than its open. NOT the displacement candle. NOT a green candle — that would be wrong.
+      - Bearish OB → the dt of the LAST UP-CLOSED (close > open, GREEN) candle BEFORE the bearish displacement leg. The candle's close MUST be greater than its open. NOT the displacement candle. NOT a red candle — that would be wrong.
+      Concrete examples:
+        Sequence: ...green green [RED candle, c=4615, o=4625] [GREEN displacement, 4615→4640]...
+        The RED candle is the BULLISH OB. type="bullish", anchor_dt=red candle's dt.
+        Sequence: ...red red [GREEN candle, c=4630, o=4625] [RED displacement, 4630→4610]...
+        The GREEN candle is the BEARISH OB. type="bearish", anchor_dt=green candle's dt.
+      If you find yourself anchoring a "bullish OB" to a green/up-closed candle, you have it wrong — re-pick. The system will silently DROP wrong-color OBs.
     For each "fvgs[i].anchor_dt":
       - Set anchor_dt to the dt of the FIRST candle of the 3-candle FVG pattern (the candle BEFORE the displacement). The 3 candles are: anchor (first), anchor+1 (the displacement, middle), anchor+2 (after).
       - Bullish FVG geometry: candle[anchor].high < candle[anchor+2].low (a real upward gap exists).

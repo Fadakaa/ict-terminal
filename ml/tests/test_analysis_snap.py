@@ -9,7 +9,7 @@ def _candle(h, l, dt="2026-04-30 12:00"):
 class TestOrderBlockSnap:
     def test_snaps_high_low_when_diverged(self):
         candles = [_candle(100, 90), _candle(110, 95), _candle(120, 105)]
-        analysis = {"orderBlocks": [{"type": "bullish", "high": 80, "low": 70, "candleIndex": 1}]}
+        analysis = {"orderBlocks": [{"type": "bearish", "high": 80, "low": 70, "candleIndex": 1}]}
         out, diag = snap_analysis_to_candles(analysis, candles)
         assert out["orderBlocks"][0]["high"] == 110
         assert out["orderBlocks"][0]["low"] == 95
@@ -19,7 +19,7 @@ class TestOrderBlockSnap:
 
     def test_within_tolerance_unchanged(self):
         candles = [_candle(100, 90), _candle(110.3, 95.2)]
-        analysis = {"orderBlocks": [{"type": "bullish", "high": 110, "low": 95, "candleIndex": 1}]}
+        analysis = {"orderBlocks": [{"type": "bearish", "high": 110, "low": 95, "candleIndex": 1}]}
         out, diag = snap_analysis_to_candles(analysis, candles)
         assert "snapped" not in out["orderBlocks"][0]
         assert diag["snapped_obs"] == 0
@@ -139,7 +139,7 @@ class TestIdempotency:
         candles = [_candle(100, 90), _candle(110, 95), _candle(120, 105), _candle(130, 115)]
         analysis = {
             "bias": "bullish",
-            "orderBlocks": [{"type": "bullish", "high": 110, "low": 95, "candleIndex": 1}],
+            "orderBlocks": [{"type": "bearish", "high": 110, "low": 95, "candleIndex": 1}],
             "fvgs": [{"type": "bullish", "high": 105, "low": 100, "startIndex": 0}],
             "liquidity": [{"type": "buyside", "price": 130, "candleIndex": 3}],
         }
@@ -172,7 +172,7 @@ class TestCalibrateEndpointIntegration:
         analysis = {
             "bias": "bullish",
             "orderBlocks": [
-                {"type": "bullish", "high": 4540.0, "low": 4520.0, "candleIndex": 1, "tf": "1H"},
+                {"type": "bearish", "high": 4540.0, "low": 4520.0, "candleIndex": 1, "tf": "1H"},
             ],
             "fvgs": [],
             "liquidity": [],
@@ -208,7 +208,7 @@ class TestCalibrateEndpointIntegration:
         analysis = {
             "bias": "bullish",
             "orderBlocks": [
-                {"type": "bullish", "high": 4596, "low": 4581, "candleIndex": 1, "tf": "1H"},
+                {"type": "bearish", "high": 4596, "low": 4581, "candleIndex": 1, "tf": "1H"},
             ],
             "fvgs": [],
             "liquidity": [],
@@ -253,7 +253,7 @@ class TestScannerSnapIntegration:
         # Claude returns OB at candleIndex=1 with diverged values
         analysis = {
             "orderBlocks": [
-                {"type": "bullish", "high": 4540.0, "low": 4520.0, "candleIndex": 1, "tf": "1H"},
+                {"type": "bearish", "high": 4540.0, "low": 4520.0, "candleIndex": 1, "tf": "1H"},
             ],
             "fvgs": [], "liquidity": [],
         }
@@ -296,7 +296,7 @@ class TestAnchorDtResolution:
     def test_resolves_ob_anchor_dt_to_candleindex(self):
         candles = self._build_candles()
         analysis = {
-            "orderBlocks": [{"type": "bullish", "high": 110, "low": 95, "anchor_dt": "2026-04-30 09:00"}],
+            "orderBlocks": [{"type": "bearish", "high": 110, "low": 95, "anchor_dt": "2026-04-30 09:00"}],
         }
         out, diag = snap_analysis_to_candles(analysis, candles)
         assert len(out["orderBlocks"]) == 1
@@ -318,7 +318,7 @@ class TestAnchorDtResolution:
         candles = self._build_candles()
         analysis = {
             "orderBlocks": [{
-                "type": "bullish",
+                "type": "bearish",
                 "high": 130, "low": 115,   # matches index 3 (11:00)
                 "candleIndex": 0,          # wrong index
                 "anchor_dt": "2026-04-30 11:00",  # correct datetime
@@ -331,7 +331,7 @@ class TestAnchorDtResolution:
     def test_falls_back_to_legacy_candleindex_when_no_anchor_dt(self):
         candles = self._build_candles()
         analysis = {
-            "orderBlocks": [{"type": "bullish", "high": 110, "low": 95, "candleIndex": 1}],
+            "orderBlocks": [{"type": "bearish", "high": 110, "low": 95, "candleIndex": 1}],
         }
         out, diag = snap_analysis_to_candles(analysis, candles)
         assert len(out["orderBlocks"]) == 1
@@ -341,7 +341,7 @@ class TestAnchorDtResolution:
     def test_snaps_high_low_when_anchor_dt_resolves_but_values_diverge(self):
         candles = self._build_candles()
         analysis = {
-            "orderBlocks": [{"type": "bullish", "high": 200, "low": 50, "anchor_dt": "2026-04-30 09:00"}],
+            "orderBlocks": [{"type": "bearish", "high": 200, "low": 50, "anchor_dt": "2026-04-30 09:00"}],
         }
         out, diag = snap_analysis_to_candles(analysis, candles)
         assert out["orderBlocks"][0]["high"] == 110
@@ -378,3 +378,79 @@ class TestAnchorDtResolution:
         out, _ = snap_analysis_to_candles(analysis, candles)
         assert out["liquidity"][0]["candleIndex"] == 3
         assert out["liquidity"][0]["anchor_dt"] == "2026-04-30 11:00"
+
+
+class TestObColorValidation:
+    @staticmethod
+    def _bullish_candle(h, l, dt="2026-04-30 10:00"):
+        return {"datetime": dt, "open": l, "high": h, "low": l, "close": h}
+
+    @staticmethod
+    def _bearish_candle(h, l, dt="2026-04-30 10:00"):
+        return {"datetime": dt, "open": h, "high": h, "low": l, "close": l}
+
+    @staticmethod
+    def _doji_candle(h, l, dt="2026-04-30 10:00"):
+        mid = (h + l) / 2
+        return {"datetime": dt, "open": mid, "high": h, "low": l, "close": mid}
+
+    def test_drops_bullish_ob_on_bullish_candle(self):
+        candles = [self._bullish_candle(110, 95)]
+        analysis = {"orderBlocks": [{"type": "bullish", "high": 110, "low": 95, "candleIndex": 0}]}
+        out, diag = snap_analysis_to_candles(analysis, candles)
+        assert out["orderBlocks"] == []
+        assert diag["dropped_obs"] == 1
+        assert diag["wrong_color_obs"] == 1
+
+    def test_drops_bearish_ob_on_bearish_candle(self):
+        candles = [self._bearish_candle(110, 95)]
+        analysis = {"orderBlocks": [{"type": "bearish", "high": 110, "low": 95, "candleIndex": 0}]}
+        out, diag = snap_analysis_to_candles(analysis, candles)
+        assert out["orderBlocks"] == []
+        assert diag["dropped_obs"] == 1
+        assert diag["wrong_color_obs"] == 1
+
+    def test_keeps_bullish_ob_on_bearish_candle(self):
+        candles = [self._bearish_candle(110, 95)]
+        analysis = {"orderBlocks": [{"type": "bullish", "high": 110, "low": 95, "candleIndex": 0}]}
+        out, diag = snap_analysis_to_candles(analysis, candles)
+        assert len(out["orderBlocks"]) == 1
+        assert diag["dropped_obs"] == 0
+        assert diag["wrong_color_obs"] == 0
+
+    def test_keeps_bearish_ob_on_bullish_candle(self):
+        candles = [self._bullish_candle(110, 95)]
+        analysis = {"orderBlocks": [{"type": "bearish", "high": 110, "low": 95, "candleIndex": 0}]}
+        out, diag = snap_analysis_to_candles(analysis, candles)
+        assert len(out["orderBlocks"]) == 1
+        assert diag["wrong_color_obs"] == 0
+
+    def test_accepts_doji_for_either_ob_type(self):
+        candles = [self._doji_candle(110, 95)]
+        bull_analysis = {"orderBlocks": [{"type": "bullish", "high": 110, "low": 95, "candleIndex": 0}]}
+        bull_out, bull_diag = snap_analysis_to_candles(bull_analysis, candles)
+        assert len(bull_out["orderBlocks"]) == 1
+        assert bull_diag["wrong_color_obs"] == 0
+
+        bear_analysis = {"orderBlocks": [{"type": "bearish", "high": 110, "low": 95, "candleIndex": 0}]}
+        bear_out, bear_diag = snap_analysis_to_candles(bear_analysis, candles)
+        assert len(bear_out["orderBlocks"]) == 1
+        assert bear_diag["wrong_color_obs"] == 0
+
+    def test_fvg_color_not_validated(self):
+        candles = [
+            self._bullish_candle(100, 90, "2026-04-30 10:00"),
+            self._bullish_candle(115, 110, "2026-04-30 11:00"),
+            self._bullish_candle(125, 120, "2026-04-30 12:00"),
+        ]
+        analysis = {"fvgs": [{"type": "bullish", "high": 120, "low": 100, "startIndex": 0}]}
+        out, diag = snap_analysis_to_candles(analysis, candles)
+        assert len(out["fvgs"]) == 1
+        assert diag["wrong_color_obs"] == 0
+
+    def test_liquidity_color_not_validated(self):
+        candles = [self._bullish_candle(110, 95)]
+        analysis = {"liquidity": [{"type": "sellside", "price": 95, "candleIndex": 0}]}
+        out, diag = snap_analysis_to_candles(analysis, candles)
+        assert len(out["liquidity"]) == 1
+        assert diag["wrong_color_obs"] == 0

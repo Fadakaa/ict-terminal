@@ -6,6 +6,7 @@ function makeDiagnostics() {
     snapped_fvgs: 0, dropped_fvgs: 0,
     snapped_liquidity: 0, dropped_liquidity: 0,
     unresolved_anchor: 0,
+    wrong_color_obs: 0,
     deltas: [],
   };
 }
@@ -34,6 +35,23 @@ function snapOrderBlocks(obs, candles, tolerance, diag) {
       continue;
     }
     const c = candles[ci];
+
+    // ICT color validation: bullish OB must anchor on a down-closed (red) candle,
+    // bearish OB must anchor on an up-closed (green) candle. Dojis (close === open)
+    // are ambiguous — accept them rather than drop.
+    const candleIsBullish = c.close > c.open;
+    const candleIsBearish = c.close < c.open;
+    if (ob.type === "bullish" && candleIsBullish) {
+      diag.dropped_obs += 1;
+      diag.wrong_color_obs += 1;
+      continue;
+    }
+    if (ob.type === "bearish" && candleIsBearish) {
+      diag.dropped_obs += 1;
+      diag.wrong_color_obs += 1;
+      continue;
+    }
+
     const highOff = Math.abs((ob.high ?? 0) - c.high);
     const lowOff = Math.abs((ob.low ?? 0) - c.low);
     if (highOff > tolerance || lowOff > tolerance) {

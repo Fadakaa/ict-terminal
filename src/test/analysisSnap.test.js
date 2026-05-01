@@ -7,7 +7,7 @@ describe("snapAnalysisToCandles — orderBlocks", () => {
   it("snaps high/low when both diverge by more than $0.50", () => {
     const candles = [c(100, 90), c(110, 95), c(120, 105)];
     const analysis = {
-      orderBlocks: [{ type: "bullish", high: 80, low: 70, candleIndex: 1 }],
+      orderBlocks: [{ type: "bearish", high: 80, low: 70, candleIndex: 1 }],
     };
     const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
     expect(out.orderBlocks[0].high).toBe(110);
@@ -20,7 +20,7 @@ describe("snapAnalysisToCandles — orderBlocks", () => {
   it("leaves OB unchanged when both within $0.50 tolerance", () => {
     const candles = [c(100, 90), c(110.3, 95.2), c(120, 105)];
     const analysis = {
-      orderBlocks: [{ type: "bullish", high: 110, low: 95, candleIndex: 1 }],
+      orderBlocks: [{ type: "bearish", high: 110, low: 95, candleIndex: 1 }],
     };
     const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
     expect(out.orderBlocks[0].high).toBe(110);
@@ -32,7 +32,7 @@ describe("snapAnalysisToCandles — orderBlocks", () => {
   it("snaps both fields when only one is out of tolerance", () => {
     const candles = [c(110.2, 95)];
     const analysis = {
-      orderBlocks: [{ type: "bullish", high: 110, low: 80, candleIndex: 0 }],
+      orderBlocks: [{ type: "bearish", high: 110, low: 80, candleIndex: 0 }],
     };
     const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
     expect(out.orderBlocks[0].high).toBe(110.2);
@@ -318,7 +318,7 @@ describe("snapAnalysisToCandles — idempotency", () => {
     const candles = [c(100, 90), c(110, 95), c(120, 105), c(130, 115)];
     const analysis = {
       bias: "bullish",
-      orderBlocks: [{ type: "bullish", high: 110, low: 95, candleIndex: 1, tf: "1H" }],
+      orderBlocks: [{ type: "bearish", high: 110, low: 95, candleIndex: 1, tf: "1H" }],
       fvgs: [{ type: "bullish", high: 105, low: 100, startIndex: 0, tf: "1H" }],
       liquidity: [{ type: "buyside", price: 130, candleIndex: 3, tf: "1H" }],
     };
@@ -352,7 +352,7 @@ describe("snapAnalysisToCandles — anchor_dt resolution", () => {
   it("resolves OB anchor_dt to correct numeric candleIndex", () => {
     const candles = buildCandles();
     const analysis = {
-      orderBlocks: [{ type: "bullish", high: 110, low: 95, anchor_dt: "2026-04-30 09:00" }],
+      orderBlocks: [{ type: "bearish", high: 110, low: 95, anchor_dt: "2026-04-30 09:00" }],
     };
     const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
     expect(out.orderBlocks).toHaveLength(1);
@@ -376,7 +376,7 @@ describe("snapAnalysisToCandles — anchor_dt resolution", () => {
     const candles = buildCandles();
     const analysis = {
       orderBlocks: [{
-        type: "bullish",
+        type: "bearish",
         high: 130, low: 115,                       // matches index 3 (candleAt 11:00)
         candleIndex: 0,                            // wrong index
         anchor_dt: "2026-04-30 11:00",            // correct datetime
@@ -390,7 +390,7 @@ describe("snapAnalysisToCandles — anchor_dt resolution", () => {
   it("falls back to legacy candleIndex when anchor_dt is missing", () => {
     const candles = buildCandles();
     const analysis = {
-      orderBlocks: [{ type: "bullish", high: 110, low: 95, candleIndex: 1 }],
+      orderBlocks: [{ type: "bearish", high: 110, low: 95, candleIndex: 1 }],
     };
     const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
     expect(out.orderBlocks).toHaveLength(1);
@@ -401,7 +401,7 @@ describe("snapAnalysisToCandles — anchor_dt resolution", () => {
   it("snaps high/low when anchor_dt resolves but values diverge", () => {
     const candles = buildCandles();
     const analysis = {
-      orderBlocks: [{ type: "bullish", high: 200, low: 50, anchor_dt: "2026-04-30 09:00" }],
+      orderBlocks: [{ type: "bearish", high: 200, low: 50, anchor_dt: "2026-04-30 09:00" }],
     };
     const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
     expect(out.orderBlocks[0].high).toBe(110);
@@ -444,5 +444,102 @@ describe("snapAnalysisToCandles — anchor_dt resolution", () => {
     const { analysis: out } = snapAnalysisToCandles(analysis, candles);
     expect(out.liquidity[0].candleIndex).toBe(3);
     expect(out.liquidity[0].anchor_dt).toBe("2026-04-30 11:00");
+  });
+});
+
+describe("snapAnalysisToCandles — OB color validation", () => {
+  const bullishCandle = (h, l, dt = "2026-04-30 10:00") => ({
+    datetime: dt, open: l, high: h, low: l, close: h,  // close > open
+  });
+  const bearishCandle = (h, l, dt = "2026-04-30 10:00") => ({
+    datetime: dt, open: h, high: h, low: l, close: l,  // close < open
+  });
+  const dojiCandle = (h, l, dt = "2026-04-30 10:00") => ({
+    datetime: dt, open: (h + l) / 2, high: h, low: l, close: (h + l) / 2,
+  });
+
+  it("drops bullish OB anchored to a bullish (up-closed) candle", () => {
+    const candles = [bullishCandle(110, 95)];
+    const analysis = {
+      orderBlocks: [{ type: "bullish", high: 110, low: 95, candleIndex: 0 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.orderBlocks).toHaveLength(0);
+    expect(diagnostics.dropped_obs).toBe(1);
+    expect(diagnostics.wrong_color_obs).toBe(1);
+  });
+
+  it("drops bearish OB anchored to a bearish (down-closed) candle", () => {
+    const candles = [bearishCandle(110, 95)];
+    const analysis = {
+      orderBlocks: [{ type: "bearish", high: 110, low: 95, candleIndex: 0 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.orderBlocks).toHaveLength(0);
+    expect(diagnostics.dropped_obs).toBe(1);
+    expect(diagnostics.wrong_color_obs).toBe(1);
+  });
+
+  it("keeps bullish OB anchored to a bearish (down-closed) candle (correct ICT)", () => {
+    const candles = [bearishCandle(110, 95)];
+    const analysis = {
+      orderBlocks: [{ type: "bullish", high: 110, low: 95, candleIndex: 0 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.orderBlocks).toHaveLength(1);
+    expect(diagnostics.dropped_obs).toBe(0);
+    expect(diagnostics.wrong_color_obs).toBe(0);
+  });
+
+  it("keeps bearish OB anchored to a bullish (up-closed) candle (correct ICT)", () => {
+    const candles = [bullishCandle(110, 95)];
+    const analysis = {
+      orderBlocks: [{ type: "bearish", high: 110, low: 95, candleIndex: 0 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.orderBlocks).toHaveLength(1);
+    expect(diagnostics.dropped_obs).toBe(0);
+    expect(diagnostics.wrong_color_obs).toBe(0);
+  });
+
+  it("accepts doji candles (close === open) for either OB type", () => {
+    const candles = [dojiCandle(110, 95)];
+    const bullAnalysis = {
+      orderBlocks: [{ type: "bullish", high: 110, low: 95, candleIndex: 0 }],
+    };
+    const { analysis: bullOut, diagnostics: bullDiag } = snapAnalysisToCandles(bullAnalysis, candles);
+    expect(bullOut.orderBlocks).toHaveLength(1);
+    expect(bullDiag.wrong_color_obs).toBe(0);
+
+    const bearAnalysis = {
+      orderBlocks: [{ type: "bearish", high: 110, low: 95, candleIndex: 0 }],
+    };
+    const { analysis: bearOut, diagnostics: bearDiag } = snapAnalysisToCandles(bearAnalysis, candles);
+    expect(bearOut.orderBlocks).toHaveLength(1);
+    expect(bearDiag.wrong_color_obs).toBe(0);
+  });
+
+  it("does not validate FVG color (FVGs ignore color rules)", () => {
+    const candles = [
+      bullishCandle(100, 90, "2026-04-30 10:00"),
+      bullishCandle(115, 110, "2026-04-30 11:00"),
+      bullishCandle(125, 120, "2026-04-30 12:00"),
+    ];
+    const analysis = {
+      fvgs: [{ type: "bullish", high: 120, low: 100, startIndex: 0 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.fvgs).toHaveLength(1);
+    expect(diagnostics.wrong_color_obs).toBe(0);
+  });
+
+  it("does not validate liquidity color (liquidity ignores color rules)", () => {
+    const candles = [bullishCandle(110, 95)];
+    const analysis = {
+      liquidity: [{ type: "sellside", price: 95, candleIndex: 0 }],
+    };
+    const { analysis: out, diagnostics } = snapAnalysisToCandles(analysis, candles);
+    expect(out.liquidity).toHaveLength(1);
+    expect(diagnostics.wrong_color_obs).toBe(0);
   });
 });

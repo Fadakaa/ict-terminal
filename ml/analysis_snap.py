@@ -19,6 +19,7 @@ def _make_diagnostics() -> dict:
         "snapped_fvgs": 0, "dropped_fvgs": 0,
         "snapped_liquidity": 0, "dropped_liquidity": 0,
         "unresolved_anchor": 0,
+        "wrong_color_obs": 0,
         "deltas": [],
     }
 
@@ -52,6 +53,25 @@ def _snap_obs(obs: list[dict], candles: list[dict], tolerance: float, diag: dict
         c = candles[ci]
         c_high = float(c["high"])
         c_low = float(c["low"])
+
+        c_open = float(c["open"])
+        c_close = float(c["close"])
+
+        # ICT color validation: bullish OB must anchor on a down-closed (red) candle,
+        # bearish OB must anchor on an up-closed (green) candle. Dojis (close === open)
+        # are ambiguous — accept them rather than drop.
+        candle_is_bullish = c_close > c_open
+        candle_is_bearish = c_close < c_open
+        ob_type = ob.get("type")
+        if ob_type == "bullish" and candle_is_bullish:
+            diag["dropped_obs"] += 1
+            diag["wrong_color_obs"] += 1
+            continue
+        if ob_type == "bearish" and candle_is_bearish:
+            diag["dropped_obs"] += 1
+            diag["wrong_color_obs"] += 1
+            continue
+
         high_off = abs(float(ob.get("high", 0)) - c_high)
         low_off = abs(float(ob.get("low", 0)) - c_low)
         if high_off > tolerance or low_off > tolerance:
