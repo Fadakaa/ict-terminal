@@ -186,6 +186,7 @@ EXECUTION CANDLES ({len(h1_slim)} candles):
 9. STOP LOSS: Gold's noise floor is 3.0 ATR. Place SL below/above the structural level (OB boundary) but ensure minimum 3.0 ATR distance from entry. Tighter SLs get stopped by normal volatility ~65%+ of the time.
 10. If there is no high-probability setup right now, say so honestly. Set entry to null.
 11. For every OB, FVG, and liquidity level you return, set "tf" to the timeframe where you identified it (e.g. "1H" or "4H" — match the labels of the candle blocks above). HTF zones generally carry more weight than LTF zones; flag them so the system can weight them accordingly. Use execution-timeframe-relative candleIndex/startIndex even for HTF zones — find the execution candle that aligns with the HTF zone's anchor time.
+12. CRITICAL CONSISTENCY: Numeric fields you return MUST match the actual candle data, not paraphrased values from your prose. For each "orderBlocks[i]": "high" and "low" MUST equal the actual high and low of the candle at "candleIndex". For each "fvgs[i]": bullish → "low" = candle[startIndex].high, "high" = candle[startIndex+2].low; bearish → "high" = candle[startIndex].low, "low" = candle[startIndex+2].high. For each "liquidity[i]": "price" MUST equal candle[candleIndex].high (buyside) or candle[candleIndex].low (sellside). Do not round, paraphrase, or use values from a non-anchor candle. Mismatches will be silently corrected, but they signal you got the anchor candle wrong.
 
 Return ONLY valid JSON:
 {{

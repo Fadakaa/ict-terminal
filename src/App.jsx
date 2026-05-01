@@ -284,6 +284,7 @@ ANALYSIS FRAMEWORK:
 7. CRITICAL: Only suggest entry if there is a pullback or rejection into the zone. Do NOT enter on displacement candles.
 8. If there is no high-probability setup right now, say so honestly. Set entry to null.
 9. For every OB, FVG, and liquidity level you return, set "tf" to the timeframe where you identified it ("1H" or "4H"). Use 1H-relative candleIndex/startIndex even for 4H zones — find the 1H candle that aligns with the 4H zone's anchor time. Include 4H zones if they are within or near the visible 1H window and relevant to the setup.
+10. CRITICAL CONSISTENCY: Numeric fields you return MUST match the actual candle data, not paraphrased values from your prose. For each "orderBlocks[i]": "high" and "low" MUST equal the actual high and low of the candle at "candleIndex". For each "fvgs[i]": bullish → "low" = candle[startIndex].high, "high" = candle[startIndex+2].low; bearish → "high" = candle[startIndex].low, "low" = candle[startIndex+2].high. For each "liquidity[i]": "price" MUST equal candle[candleIndex].high (buyside) or candle[candleIndex].low (sellside). Do not round, paraphrase, or use values from a non-anchor candle. Mismatches will be silently corrected, but they signal you got the anchor candle wrong.
 
 Return ONLY valid JSON:
 {
