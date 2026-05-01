@@ -18,6 +18,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "--port=5180", "--strictPort"],
       "port": 5180
+    },
+    {
+      "name": "ict-worktree",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port=5174", "--strictPort"],
+      "port": 5174
     }
   ]
 }
