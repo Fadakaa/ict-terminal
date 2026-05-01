@@ -36,12 +36,57 @@ function snapOrderBlocks(obs, candles, tolerance, diag) {
   return out;
 }
 
+function snapFvgs(fvgs, candles, tolerance, diag) {
+  const out = [];
+  const n = candles.length;
+  for (const fvg of fvgs) {
+    const si = fvg.startIndex;
+    if (si === undefined || si === null || si < 0 || si + 2 >= n) {
+      diag.dropped_fvgs += 1;
+      continue;
+    }
+    const c0 = candles[si];
+    const c2 = candles[si + 2];
+    let expectedHigh, expectedLow;
+    if (fvg.type === "bullish") {
+      expectedLow = c0.high;
+      expectedHigh = c2.low;
+    } else {
+      expectedHigh = c0.low;
+      expectedLow = c2.high;
+    }
+    if (expectedLow >= expectedHigh) {
+      diag.dropped_fvgs += 1;
+      continue;
+    }
+    const highOff = Math.abs((fvg.high ?? 0) - expectedHigh);
+    const lowOff = Math.abs((fvg.low ?? 0) - expectedLow);
+    if (highOff > tolerance || lowOff > tolerance) {
+      diag.snapped_fvgs += 1;
+      diag.deltas.push({
+        kind: "fvg", startIndex: si,
+        claimed: { high: fvg.high, low: fvg.low },
+        snapped: { high: expectedHigh, low: expectedLow },
+      });
+      out.push({ ...fvg, high: expectedHigh, low: expectedLow, snapped: true });
+    } else {
+      out.push(fvg);
+    }
+  }
+  return out;
+}
+
 export function snapAnalysisToCandles(analysis, candles, options = {}) {
   const tolerance = options.tolerance ?? DEFAULT_TOLERANCE;
   const diag = makeDiagnostics();
   const obs = analysis.orderBlocks ?? [];
+  const fvgs = analysis.fvgs ?? [];
   return {
-    analysis: { ...analysis, orderBlocks: snapOrderBlocks(obs, candles, tolerance, diag) },
+    analysis: {
+      ...analysis,
+      orderBlocks: snapOrderBlocks(obs, candles, tolerance, diag),
+      fvgs: snapFvgs(fvgs, candles, tolerance, diag),
+    },
     diagnostics: diag,
   };
 }
