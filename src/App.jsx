@@ -13,6 +13,7 @@ import {
 } from "./market.js";
 import { useChartScale } from "./useChartScale.js";
 import { scaleYDomain, scaleXRange, panXRange, wheelZoom } from "./chartScaling.js";
+import { snapAnalysisToCandles, groupLiquidityByLevel } from "./analysisSnap.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -635,7 +636,14 @@ export default function App() {
       const jsonStart = clean.indexOf("{");
       const jsonEnd = clean.lastIndexOf("}");
       if (jsonStart >= 0 && jsonEnd > jsonStart) clean = clean.slice(jsonStart, jsonEnd + 1);
-      const parsed = JSON.parse(clean);
+      const raw = JSON.parse(clean);
+      const { analysis: parsed, diagnostics } = snapAnalysisToCandles(raw, cds);
+      if (
+        diagnostics.snapped_obs || diagnostics.snapped_fvgs || diagnostics.snapped_liquidity ||
+        diagnostics.dropped_obs || diagnostics.dropped_fvgs || diagnostics.dropped_liquidity
+      ) {
+        console.warn("[analysis] overlay snap diagnostics:", diagnostics);
+      }
       analysisCacheRef.current = { hash, result: parsed };
       setAnalysis(parsed);
 
