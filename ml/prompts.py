@@ -185,8 +185,32 @@ EXECUTION CANDLES ({len(h1_slim)} candles):
 8. CRITICAL: Only suggest entry if there is a pullback or rejection into the zone. Do NOT enter on displacement candles.
 9. STOP LOSS: Gold's noise floor is 3.0 ATR. Place SL below/above the structural level (OB boundary) but ensure minimum 3.0 ATR distance from entry. Tighter SLs get stopped by normal volatility ~65%+ of the time.
 10. If there is no high-probability setup right now, say so honestly. Set entry to null.
-11. For every OB, FVG, and liquidity level you return, set "tf" to the timeframe where you identified it (e.g. "1H" or "4H" — match the labels of the candle blocks above). HTF zones generally carry more weight than LTF zones; flag them so the system can weight them accordingly. Use execution-timeframe-relative candleIndex/startIndex even for HTF zones — find the execution candle that aligns with the HTF zone's anchor time.
-12. CRITICAL CONSISTENCY: Numeric fields you return MUST match the actual candle data, not paraphrased values from your prose. For each "orderBlocks[i]": "high" and "low" MUST equal the actual high and low of the candle at "candleIndex". For each "fvgs[i]": bullish → "low" = candle[startIndex].high, "high" = candle[startIndex+2].low; bearish → "high" = candle[startIndex].low, "low" = candle[startIndex+2].high. For each "liquidity[i]": "price" MUST equal candle[candleIndex].high (buyside) or candle[candleIndex].low (sellside). Do not round, paraphrase, or use values from a non-anchor candle. Mismatches will be silently corrected, but they signal you got the anchor candle wrong.
+11. For every OB, FVG, and liquidity level you return, set "tf" to the timeframe where you identified it (e.g. "1H" or "4H" — match the labels of the candle blocks above). HTF zones generally carry more weight than LTF zones; flag them so the system can weight them accordingly. Use a execution-timeframe candle's dt for anchor_dt even for HTF zones — find the execution candle that aligns with the HTF zone's anchor time.
+12. ANCHOR CANDLE RULES (use these exact rules — do not improvise):
+    For each "orderBlocks[i].anchor_dt":
+      WARNING — DO NOT BE MISLED BY THE NAME. "Bullish OB" does NOT mean a green/up-closed candle. It means an OB that PRODUCES bullish moves. Per ICT, this is a DOWN-CLOSED (close < open, RED) candle that gets broken by upward displacement. "Bearish OB" similarly is a GREEN/up-closed candle that gets broken by downward displacement.
+      - Bullish OB → the dt of the LAST DOWN-CLOSED (close < open, RED) candle BEFORE the bullish displacement leg. The candle's close MUST be less than its open. NOT the displacement candle. NOT a green candle — that would be wrong.
+      - Bearish OB → the dt of the LAST UP-CLOSED (close > open, GREEN) candle BEFORE the bearish displacement leg. The candle's close MUST be greater than its open. NOT the displacement candle. NOT a red candle — that would be wrong.
+      Concrete examples:
+        Sequence: ...green green [RED candle, c=4615, o=4625] [GREEN displacement, 4615→4640]...
+        The RED candle is the BULLISH OB. type="bullish", anchor_dt=red candle's dt.
+        Sequence: ...red red [GREEN candle, c=4630, o=4625] [RED displacement, 4630→4610]...
+        The GREEN candle is the BEARISH OB. type="bearish", anchor_dt=green candle's dt.
+      If you find yourself anchoring a "bullish OB" to a green/up-closed candle, you have it wrong — re-pick. The system will silently DROP wrong-color OBs.
+      MUST BE THE *IMMEDIATE LAST* OPPOSING-COLOR CANDLE — no skipping over more recent ones:
+        For a bullish OB, the anchor MUST be the very LAST red candle before the upward displacement leg. If there is ANY red/down-closed candle between your chosen anchor and the start of the displacement, you have picked too far back — pick the more recent one. "Most recent red candle, then displacement" is the only valid arrangement.
+        Same for bearish OB: the anchor MUST be the very LAST green candle before the downward displacement leg. No green candles allowed between your anchor and the displacement start.
+        Self-check: look at the candle right after your anchor. It MUST be either the displacement candle itself, or part of the displacement leg (continuing in the displacement direction). If the candle right after your anchor is another opposing-color candle, you picked the wrong anchor.
+    For each "fvgs[i].anchor_dt":
+      - Set anchor_dt to the dt of the FIRST candle of the 3-candle FVG pattern (the candle BEFORE the displacement). The 3 candles are: anchor (first), anchor+1 (the displacement, middle), anchor+2 (after).
+      - Bullish FVG geometry: candle[anchor].high < candle[anchor+2].low (a real upward gap exists).
+      - Bearish FVG geometry: candle[anchor].low > candle[anchor+2].high (a real downward gap exists).
+      - Do NOT use the displacement candle as anchor. Do NOT widen the zone using the displacement candle's high/low — use only the strict 3-candle gap.
+    For each "liquidity[i].anchor_dt":
+      - Buyside (BSL) → dt of the candle whose "high" IS the visible peak. If multiple candles share equal/near-equal highs, use the MOST RECENT one.
+      - Sellside (SSL) → dt of the candle whose "low" IS the visible trough. Most recent if equal lows.
+      - Do NOT anchor to a tap/retest candle.
+13. CRITICAL CONSISTENCY: Numeric fields you return MUST match the actual candle data, not paraphrased values from your prose. The "anchor_dt" MUST be copied verbatim from the chosen candle's "dt" field — do not invent timestamps. For each "orderBlocks[i]": "high" and "low" MUST equal the actual high and low of the candle whose dt equals anchor_dt. For each "fvgs[i]": bullish → "low" = candle[anchor].high, "high" = candle[anchor+2].low; bearish → "high" = candle[anchor].low, "low" = candle[anchor+2].high. For each "liquidity[i]": "price" MUST equal anchor candle's high (buyside) or low (sellside). Mismatches will be silently corrected, but they signal you got the anchor candle wrong.
 
 Return ONLY valid JSON:
 {{
@@ -201,21 +225,24 @@ Return ONLY valid JSON:
     "htf_bias": "bullish|bearish|neutral"
   }},
   "orderBlocks": [{{
-    "type": "bullish|bearish", "high": number, "low": number, "candleIndex": number,
+    "type": "bullish|bearish", "high": number, "low": number,
+    "anchor_dt": "string — copy verbatim from the chosen candle's dt field",
     "tf": "1H|4H|1D|...",
     "strength": "strong|moderate|weak",
     "times_tested": number,
     "note": "string"
   }}],
   "fvgs": [{{
-    "type": "bullish|bearish", "high": number, "low": number, "startIndex": number,
+    "type": "bullish|bearish", "high": number, "low": number,
+    "anchor_dt": "string — dt of the FIRST candle of the 3-candle pattern",
     "tf": "1H|4H|1D|...",
     "filled": boolean, "fill_percentage": number,
     "overlaps_ob": boolean,
     "note": "string"
   }}],
   "liquidity": [{{
-    "type": "buyside|sellside", "price": number, "candleIndex": number,
+    "type": "buyside|sellside", "price": number,
+    "anchor_dt": "string — copy verbatim from the chosen candle's dt field",
     "tf": "1H|4H|1D|...",
     "swept": boolean,
     "note": "string"
@@ -223,7 +250,7 @@ Return ONLY valid JSON:
   "structure": {{
     "type": "bos|choch|none",
     "direction": "bullish|bearish",
-    "break_candle_index": number,
+    "anchor_dt": "string — dt of the break candle",
     "note": "string"
   }},
   "entry": {{

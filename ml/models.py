@@ -15,7 +15,8 @@ class OrderBlock(BaseModel):
     type: str
     high: float
     low: float
-    candleIndex: int
+    candleIndex: Optional[int] = None
+    anchor_dt: Optional[str] = None
     tf: Optional[str] = None
     strength: str = ""
     note: str = ""
@@ -25,7 +26,8 @@ class FVG(BaseModel):
     type: str
     high: float
     low: float
-    startIndex: int
+    startIndex: Optional[int] = None
+    anchor_dt: Optional[str] = None
     tf: Optional[str] = None
     filled: bool = False
     note: str = ""
@@ -34,7 +36,8 @@ class FVG(BaseModel):
 class LiquidityLevel(BaseModel):
     type: str
     price: float
-    candleIndex: int
+    candleIndex: Optional[int] = None
+    anchor_dt: Optional[str] = None
     tf: Optional[str] = None
     note: str = ""
 
